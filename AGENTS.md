@@ -93,6 +93,7 @@ Other rules:
 - Subscribes: `/alphabot2/cmd_vel` (`geometry_msgs/Twist`).
 - Publishes: `/image/compressed` (`sensor_msgs/CompressedImage`), `/virtual_odometry` (`nav_msgs/Odometry`).
 - Goal identification + cell-level localization is via **fiducial markers** (ArUco / AprilTag) on the camera stream — there is no laser scan to fall back on.
+- **Localization & mapping scope (professor, 2026-05):** any ROS 2 method is acceptable (fiducial markers, `robot_localization`, `slam_toolbox`, `nav2` AMCL, etc.). It is not a graded contribution of this project — pick whatever yields a reliable discrete cell estimate for the MDP and move on. Do not over-invest engineering effort here.
 - Bring-up on hardware (per `Lab_guide_2526.pdf`): SSH `deec@10.16.140.<id>`, then `ros2 launch alphabot2 alphabot2_launch.py` and in another SSH `ros2 run alphabot2 motion_driver`. On the laptop set `ROS_DOMAIN_ID=<id>` before `ros2 topic list`.
 
 ## Documentation Standards

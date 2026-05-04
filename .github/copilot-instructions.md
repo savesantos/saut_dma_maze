@@ -17,6 +17,7 @@ See [AGENTS.md](../AGENTS.md) for full operational rules. The points below are t
 ## AlphaBot2 facts (do not infer otherwise)
 
 - No wheel odometry, no IMU, no LiDAR. **Camera + fiducial markers (ArUco / AprilTag) only.**
+- **Localization & mapping:** any ROS 2 method is allowed (per professor, 2026-05) — fiducials, `robot_localization`, `slam_toolbox`, `nav2` AMCL, etc. It is not the project's contribution; the MDP only needs a discrete cell estimate.
 - Subscribes: `/alphabot2/cmd_vel` (`geometry_msgs/Twist`) — namespaced, **not** `/cmd_vel`.
 - Publishes: `/image/compressed` (`sensor_msgs/CompressedImage`), `/virtual_odometry` (`nav_msgs/Odometry`).
 - `ROS_DOMAIN_ID` is set per shell from the robot IP last octet (50–70). Never hardcode it.

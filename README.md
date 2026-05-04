@@ -2,6 +2,8 @@
 
 Autonomous maze solving with **MDPs** and **model-free Reinforcement Learning**, implemented in Python on top of **ROS 2**. Target platform: **AlphaBot2 with camera** (using fiducial markers to identify the goal and aid odometry-based localization).
 
+> **Scope note (per professor, 2026-05):** localization and mapping are *not* the focus of this project. Any ROS 2 method may be used — fiducial markers (ArUco / AprilTag), `robot_localization`, `slam_toolbox`, `nav2` AMCL, or any other off-the-shelf ROS 2 stack are all acceptable. The contribution of this work is the MDP / RL decision-making layer; localization is a means to an end.
+
 Project **DMA** (Decision Making) of the *Autonomous Systems* course (IST, 2025/26).
 
 ## Team
@@ -17,7 +19,7 @@ Solve a maze with a mobile robot whose actions have **uncertain outcomes**. The 
 
 $$V^\pi(s) = \mathbb{E}_\pi\!\left[\sum_{k=0}^{\infty}\gamma^k R_{t+k+1} \mid S_t = s\right]$$
 
-Fiducial markers (camera) identify the goal cell and help wheel-odometry localize the robot at the cell level.
+Fiducial markers (camera) identify the goal cell and help localize the robot at the cell level. Any ROS 2 localization/mapping stack may be plugged in — the MDP only consumes a discrete cell estimate.
 
 ## Algorithms
 
