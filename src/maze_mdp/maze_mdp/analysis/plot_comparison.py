@@ -38,13 +38,21 @@ def _evaluate_policy_in_sim(
     return float(np.mean(steps)), successes / n_episodes
 
 
-def plot(input_dir: Path, output_dir: Path) -> None:
+def plot(
+    input_dir: Path,
+    output_dir: Path,
+    exclude_mazes: tuple[str, ...] = (),
+) -> None:
     """Render the comparative plot to ``output_dir/comparison.{png,pdf}``."""
     style.apply()
     train_df = load_training_runs(input_dir / 'training')
     deploy_df = load_deployment_runs(input_dir / 'deployment')
     if train_df.empty:
         raise SystemExit('No training runs found.')
+    if exclude_mazes:
+        train_df = train_df[~train_df['maze'].isin(exclude_mazes)]
+        if not deploy_df.empty:
+            deploy_df = deploy_df[~deploy_df['maze'].isin(exclude_mazes)]
 
     rows = []
     for _, run in train_df.iterrows():
@@ -108,8 +116,13 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--input-dir', type=Path, default=Path('data'))
     parser.add_argument('--output-dir', type=Path, default=Path('data/figures'))
+    parser.add_argument(
+        '--exclude-mazes', nargs='*', default=['fixture_3x3'],
+        help='Mazes to omit from the plot (default: fixture_3x3, which is '
+             'trivially saturated and consumes space without information).',
+    )
     args = parser.parse_args(argv)
-    plot(args.input_dir, args.output_dir)
+    plot(args.input_dir, args.output_dir, tuple(args.exclude_mazes))
 
 
 if __name__ == '__main__':

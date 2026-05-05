@@ -1,4 +1,4 @@
-"""Plot value heatmap + policy arrows per (maze, algo) pair."""
+"""Plot value heatmap + per-heading policy arrows per (maze, algo) pair."""
 
 from __future__ import annotations
 
@@ -10,49 +10,80 @@ import numpy as np
 
 from maze_mdp.analysis import style
 from maze_mdp.analysis.loaders import load_training_runs
-from maze_mdp.mdp import MDP, Action, MDPConfig
+from maze_mdp.mdp import MDP, Action, Heading, MDPConfig
 from maze_mdp.policy import policy_value
 from maze_mdp.simulator import FIXTURES, WALL
 
-_ARROW = {
-    int(Action.FORWARD): (0.0, 0.4),
-    int(Action.TURN_LEFT): (-0.3, 0.0),
-    int(Action.TURN_RIGHT): (0.3, 0.0),
+# Heading sub-position inside a cell, in (dx, dy) image coords.
+# imshow's y-axis grows downward, so North is -y.
+_HEADING_OFFSET = {
+    int(Heading.N): (0.0, -0.28),
+    int(Heading.E): (0.28, 0.0),
+    int(Heading.S): (0.0, 0.28),
+    int(Heading.W): (-0.28, 0.0),
+}
+
+# Heading -> physical (dx, dy) unit vector (image coords).
+_HEADING_DIR = {
+    int(Heading.N): (0.0, -1.0),
+    int(Heading.E): (1.0, 0.0),
+    int(Heading.S): (0.0, 1.0),
+    int(Heading.W): (-1.0, 0.0),
+}
+
+# Action -> color so the legend is readable even when arrows overlap.
+_ACTION_COLOR = {
+    int(Action.FORWARD): 'white',
+    int(Action.TURN_LEFT): '#ffd166',
+    int(Action.TURN_RIGHT): '#ef476f',
 }
 
 
-def _aggregate_value(maze_name: str, pi: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def _value_grid(maze_name: str, pi: np.ndarray) -> tuple[np.ndarray, MDP]:
     maze = FIXTURES[maze_name]()
     mdp = MDP(maze, MDPConfig())
     V = policy_value(mdp, pi)
     grid = np.full((maze.rows, maze.cols), np.nan)
-    arrow = np.zeros((maze.rows, maze.cols), dtype=np.int64)
     for r in range(maze.rows):
         for c in range(maze.cols):
             if maze.cells[r, c] == WALL:
                 continue
-            # Average V over heading; record dominant action over headings.
             states = [mdp.encode(r, c, h) for h in range(4)]
             grid[r, c] = float(np.mean(V[states]))
-            arrow[r, c] = int(np.bincount([pi[s] for s in states]).argmax())
-    return grid, arrow
+    return grid, mdp
+
+
+def _draw_action_arrow(ax, r: int, c: int, heading: int, action: int) -> None:
+    """Draw a tiny arrow at (r, c) for the policy entry at heading ``heading``."""
+    ox, oy = _HEADING_OFFSET[heading]
+    if action == int(Action.FORWARD):
+        dx, dy = _HEADING_DIR[heading]
+    elif action == int(Action.TURN_LEFT):
+        dx, dy = _HEADING_DIR[(heading - 1) % 4]
+    else:  # TURN_RIGHT
+        dx, dy = _HEADING_DIR[(heading + 1) % 4]
+    scale = 0.18
+    ax.arrow(
+        c + ox, r + oy, dx * scale, dy * scale,
+        head_width=0.06, head_length=0.06,
+        length_includes_head=True,
+        color=_ACTION_COLOR[action], alpha=0.95, linewidth=0.8,
+    )
 
 
 def plot(input_dir: Path, output_dir: Path) -> None:
-    """Render policy/value heatmaps to ``output_dir/policy_heatmap_*.{png,pdf}``."""
+    """Render policy/value heatmaps to ``output_dir/policy_heatmap.{png,pdf}``."""
     style.apply()
     df = load_training_runs(input_dir / 'training')
     if df.empty:
         raise SystemExit(f'No runs found under {input_dir / "training"}')
-
-    # Pick the lowest-seed run per (maze, algo) for a single representative figure.
     df = df.sort_values('seed').drop_duplicates(['maze', 'algo'])
 
     mazes = sorted(df['maze'].unique())
     algos = ['vi', 'sarsa', 'qlearning']
     fig, axes = plt.subplots(
         len(algos), len(mazes),
-        figsize=(3.5 * len(mazes), 3.0 * len(algos)),
+        figsize=(3.7 * len(mazes), 3.2 * len(algos)),
         squeeze=False,
     )
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -65,20 +96,36 @@ def plot(input_dir: Path, output_dir: Path) -> None:
                 ax.axis('off')
                 continue
             pi = sub.iloc[0]['policy']['pi']
-            grid, arrows = _aggregate_value(maze, pi)
+            grid, mdp = _value_grid(maze, pi)
             im = ax.imshow(grid, cmap='viridis')
+            goal = mdp.maze.goal
             for r in range(grid.shape[0]):
                 for c in range(grid.shape[1]):
-                    if np.isnan(grid[r, c]):
+                    if np.isnan(grid[r, c]) or (r, c) == goal:
                         continue
-                    dx, dy = _ARROW[int(arrows[r, c])]
-                    ax.arrow(c, r, dx, dy, head_width=0.15, color='white', alpha=0.9)
+                    for h in range(4):
+                        s = mdp.encode(r, c, h)
+                        _draw_action_arrow(ax, r, c, h, int(pi[s]))
+            ax.scatter(
+                [goal[1]], [goal[0]], marker='*', s=120,
+                color='gold', edgecolors='black', linewidths=0.7, zorder=5,
+            )
             ax.set_title(f'{style.ALGO_LABELS[algo]} — {maze}', fontsize=9)
             ax.set_xticks([])
             ax.set_yticks([])
             fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
 
-    fig.tight_layout()
+    handles = [
+        plt.Line2D([0], [0], color=_ACTION_COLOR[int(Action.FORWARD)], lw=2,
+                   label='forward'),
+        plt.Line2D([0], [0], color=_ACTION_COLOR[int(Action.TURN_LEFT)], lw=2,
+                   label='turn left'),
+        plt.Line2D([0], [0], color=_ACTION_COLOR[int(Action.TURN_RIGHT)], lw=2,
+                   label='turn right'),
+    ]
+    fig.legend(handles=handles, loc='lower center', ncol=3, frameon=False,
+               bbox_to_anchor=(0.5, -0.01))
+    fig.tight_layout(rect=(0, 0.03, 1, 1))
     for ext in ('png', 'pdf'):
         fig.savefig(output_dir / f'policy_heatmap.{ext}', bbox_inches='tight')
     plt.close(fig)

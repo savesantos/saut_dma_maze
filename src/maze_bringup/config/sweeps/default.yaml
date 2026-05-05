@@ -15,4 +15,14 @@ td_config:
   epsilon0: 1.0
   epsilon_min: 0.05
   epsilon_anneal_frac: 0.5
+# Per-maze overrides merged on top of td_config. Sized roughly as
+# k * |S| * |A| / (1 - gamma) with k ~ 8, gamma = 0.99 (see
+# docs/mdp_design.md §7).
+td_config_overrides:
+  fixture_3x3:
+    n_episodes: 1000
+  fixture_5x5_corridor:
+    n_episodes: 5000
+  fixture_7x7_loop:
+    n_episodes: 30000
 out: data

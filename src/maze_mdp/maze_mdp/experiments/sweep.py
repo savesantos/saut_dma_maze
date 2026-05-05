@@ -34,15 +34,28 @@ def _build_configs(spec: dict) -> tuple[MDPConfig, TDConfig]:
     return MDPConfig(**mdp_overrides), TDConfig(**td_overrides)
 
 
+def _td_for_maze(spec: dict, maze: str) -> TDConfig:
+    """Apply ``td_config_overrides[<maze>]`` on top of the global ``td_config``."""
+    base = (spec.get('td_config') or {}).copy()
+    overrides = (spec.get('td_config_overrides') or {}).get(maze, {})
+    base.update(overrides)
+    return TDConfig(**base)
+
+
 def run_sweep(spec: dict) -> list[dict]:
     """Execute every (algo, maze, seed) triple in ``spec`` sequentially."""
     algos = spec['algos']
     mazes = spec['mazes']
     seeds = spec['seeds']
     out_root = Path(spec.get('out', 'data'))
-    mdp_cfg, td_cfg = _build_configs(spec)
+    mdp_cfg, _ = _build_configs(spec)
     summaries: list[dict] = []
-    for algo, maze, seed in product(algos, mazes, seeds):
+    triples = list(product(algos, mazes, seeds))
+    total = len(triples)
+    for i, (algo, maze, seed) in enumerate(triples, 1):
+        td_cfg = _td_for_maze(spec, maze)
+        print(f'[{i}/{total}] {algo} {maze} seed={seed} '
+              f'episodes={td_cfg.n_episodes}', flush=True)
         s = train_one(
             algo=algo,
             maze_name=maze,

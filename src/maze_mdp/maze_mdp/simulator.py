@@ -173,12 +173,15 @@ def fixture_5x5_corridor() -> Maze:
 
 def fixture_7x7_loop() -> Maze:
     """7x7 maze containing a loop, exercises non-tree shortest-path policies."""
+    # The inner block has a single opening at (3, 1) so every free cell is
+    # reachable from every other one (no trap regions). The agent must choose
+    # between two homotopy-distinct paths around the central island.
     return Maze.from_layout(
         layout=[
             '.......',
             '.#####.',
             '.#...#.',
-            '.#.#.#.',
+            '...#.#.',
             '.#...#.',
             '.#####.',
             '.......',
