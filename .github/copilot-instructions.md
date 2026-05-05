@@ -45,6 +45,15 @@ See [AGENTS.md](../AGENTS.md) for full operational rules. The points below are t
 
 - Use recorded `rosbag` data, not live robot runs, for repeatability.
 - Comparative analysis Value Iteration vs. SARSA vs. Q-Learning across multiple mazes and multiple runs per maze.
+- **Persist every run** (course project — results go into the IEEE report). Layout:
+  - `data/training/<algo>/<maze>/<run_id>/` → policy/Q-table (`.npz`), `params.yaml`, `metrics.csv` (episode, return, steps, epsilon, td_error), `summary.json` (seed, wall-clock, convergence iter).
+  - `data/deployment/<maze>/<run_id>/` → `rosbag`, trajectory CSV, success flag, steps-to-goal.
+  - Always record the RNG `seed`. `data/` is gitignored.
+- **Essential plots only** (do not over-produce):
+  1. Convergence curve per algorithm (return vs. episode, mean ± std over seeds).
+  2. Final policy / value-function heatmap per maze.
+  3. Comparative steps-to-goal & success rate, VI vs. SARSA vs. Q-Learning, across mazes.
+- Plotting code: `src/maze_mdp/maze_mdp/analysis/` (ROS-free, matplotlib). Output PNG + PDF to `data/figures/`. No committed notebooks.
 
 ## Documentation
 

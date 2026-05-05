@@ -54,6 +54,20 @@ Rebuild is **only** needed after editing: `setup.py` entry points, `package.xml`
 - For algorithm-only iteration, prefer `python3 -m pytest` inside `src/maze_mdp/` (skips colcon overhead). Run the full `colcon test` before pushing.
 - Evaluation runs should consume `rosbag` recordings rather than live robot data — multiple runs per maze, multiple mazes, statistical comparison Value Iteration vs. SARSA vs. Q-Learning.
 
+## Data & Plots for the Report
+
+This is a graded course project: **every training and deployment run must persist its data** so results are reproducible and figures can be regenerated for the IEEE report.
+
+- Save artifacts under `data/` (gitignored, except small reference fixtures): `data/training/<algo>/<maze>/<run_id>/` and `data/deployment/<maze>/<run_id>/`.
+- Training artifacts (per run): the learned policy / Q-table / value function (`.npz` or `.npy`), the maze + MDP config used, hyperparameters (`params.yaml`), per-episode metrics (`metrics.csv`: episode, return, steps, epsilon, td_error), and a final `summary.json` (wall-clock, seed, convergence iter).
+- Deployment artifacts (per run): `rosbag` of the run, executed trajectory (cell sequence + timestamps), success flag, steps-to-goal, collisions/replans.
+- Always set and log a `seed`; runs without a recorded seed are not acceptable for the comparative analysis.
+- **Essential plots only** (do not over-produce — the report has 6 pages):
+  1. Convergence curve per algorithm (return vs. episode, mean ± std over runs).
+  2. Final policy / value-function heatmap on each maze.
+  3. Comparative bar/box plot: steps-to-goal and success rate, Value Iteration vs. SARSA vs. Q-Learning, across mazes.
+- Plotting code lives in `src/maze_mdp/maze_mdp/analysis/` (ROS-free, matplotlib only) and writes PNG + PDF to `data/figures/`. One script per plot; no notebooks committed.
+
 ## Code Style
 
 Enforced by `ament_flake8` and `ament_pep257`. Follow the pattern below.
