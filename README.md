@@ -109,6 +109,29 @@ See [docs/tutorial.md](docs/tutorial.md) for a package-by-package tutorial:
 adding algorithms to `maze_mdp`, declaring custom interfaces in `maze_msgs`,
 and wiring nodes together with launch files in `maze_bringup`.
 
+## Reproducing the report
+
+From a fresh clone, four commands regenerate every figure in the report:
+
+```bash
+source /opt/ros/humble/setup.bash
+colcon build --symlink-install
+source install/setup.bash
+
+# 1. Run the full sweep (3 algos × 3 mazes × 5 seeds by default)
+ros2 run maze_mdp sweep --config src/maze_bringup/config/sweeps/default.yaml
+
+# 2. Generate the three figures (requires pandas + matplotlib)
+pip install -r requirements.txt   # one-time, see requirements.txt
+bash scripts/make_all_figures.sh
+```
+
+Tweak [src/maze_bringup/config/sweeps/default.yaml](src/maze_bringup/config/sweeps/default.yaml) to scale the
+evaluation matrix without touching code.
+
+For hardware deployment runs, see [docs/deployment.md](docs/deployment.md);
+for the artifact layout, [docs/data_schema.md](docs/data_schema.md).
+
 ## References
 
 - Sutton & Barto, *Reinforcement Learning: An Introduction*, chs. 3 and 6 (MIT Press, 2018).

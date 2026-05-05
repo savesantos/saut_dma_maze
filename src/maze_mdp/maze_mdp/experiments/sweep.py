@@ -1,0 +1,75 @@
+"""
+Sweep driver: run :func:`maze_mdp.experiments.runner.train_one` over a YAML grid.
+
+Sweep YAML schema:
+
+.. code-block:: yaml
+
+    algos: [vi, sarsa, qlearning]
+    mazes: [fixture_3x3, fixture_5x5_corridor, fixture_7x7_loop]
+    seeds: [0, 1, 2, 3, 4]
+    mdp_config: {gamma: 0.99, slip_prob: 0.1}
+    td_config:  {n_episodes: 2000}
+    out: data
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+from dataclasses import asdict
+from itertools import product
+from pathlib import Path
+
+import yaml
+
+from maze_mdp._td import TDConfig
+from maze_mdp.experiments.runner import train_one
+from maze_mdp.mdp import MDPConfig
+
+
+def _build_configs(spec: dict) -> tuple[MDPConfig, TDConfig]:
+    mdp_overrides = spec.get('mdp_config') or {}
+    td_overrides = spec.get('td_config') or {}
+    return MDPConfig(**mdp_overrides), TDConfig(**td_overrides)
+
+
+def run_sweep(spec: dict) -> list[dict]:
+    """Execute every (algo, maze, seed) triple in ``spec`` sequentially."""
+    algos = spec['algos']
+    mazes = spec['mazes']
+    seeds = spec['seeds']
+    out_root = Path(spec.get('out', 'data'))
+    mdp_cfg, td_cfg = _build_configs(spec)
+    summaries: list[dict] = []
+    for algo, maze, seed in product(algos, mazes, seeds):
+        s = train_one(
+            algo=algo,
+            maze_name=maze,
+            seed=int(seed),
+            out_root=out_root,
+            mdp_config=mdp_cfg,
+            td_config=td_cfg,
+        )
+        summaries.append(s)
+    return summaries
+
+
+def main(argv: list[str] | None = None) -> None:
+    """CLI entry point ``sweep`` — execute all (algo, maze, seed) triples."""
+    parser = argparse.ArgumentParser(description='Run a parameter sweep.')
+    parser.add_argument('--config', type=Path, required=True)
+    args = parser.parse_args(argv)
+    spec = yaml.safe_load(args.config.read_text())
+    summaries = run_sweep(spec)
+    # Echo configuration + summary for reproducibility.
+    print(json.dumps({
+        'spec': spec,
+        'mdp_config': asdict(_build_configs(spec)[0]),
+        'td_config': asdict(_build_configs(spec)[1]),
+        'n_runs': len(summaries),
+    }, indent=2))
+
+
+if __name__ == '__main__':
+    main()

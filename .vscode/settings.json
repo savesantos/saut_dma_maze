@@ -1,0 +1,12 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^cd /home/salva/saut_dma_maze/src/maze_mdp && python3 -m pytest -x -q 2>&1 \\| tail -25$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^cd /home/salva/saut_dma_maze/src/maze_mdp && python3 -m pytest -q 2>&1 \\| tail -10$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}

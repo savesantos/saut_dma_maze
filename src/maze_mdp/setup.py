@@ -15,15 +15,27 @@ setup(
     zip_safe=True,
     maintainer='Salvador Santos',
     maintainer_email='salvadorvelososantos@gmail.com',
-    description='MDP, Value Iteration, SARSA and Q-Learning for autonomous maze solving, plus a Python micro-simulator.',
+    description=(
+        'MDP, Value Iteration, SARSA and Q-Learning for autonomous maze '
+        'solving, plus a Python micro-simulator.'
+    ),
     license='Apache-2.0',
     extras_require={
         'test': [
             'pytest',
         ],
+        'analysis': [
+            'pandas>=1.5',
+            'matplotlib>=3.5',
+        ],
     },
     entry_points={
         'console_scripts': [
+            'maze_publisher = maze_mdp.nodes.maze_publisher:main',
+            'fiducial_localizer = maze_mdp.nodes.fiducial_localizer:main',
+            'policy_runner = maze_mdp.nodes.policy_runner:main',
+            'train = maze_mdp.experiments.runner:main',
+            'sweep = maze_mdp.experiments.sweep:main',
         ],
     },
 )

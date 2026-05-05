@@ -7,7 +7,10 @@
   <maintainer email="salvadorvelososantos@gmail.com">Salvador Santos</maintainer>
   <license>Apache-2.0</license>
 
-  <depend>rclpy</depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>maze_mdp</exec_depend>
+  <exec_depend>maze_msgs</exec_depend>
+  <exec_depend>ros2launch</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

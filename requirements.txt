@@ -1,0 +1,12 @@
+# Python runtime requirements for tooling not covered by rosdep / package.xml.
+# Install with: pip install -r requirements.txt  (or `pip install -r requirements.txt --user`)
+#
+# ROS-managed deps (rclpy, cv_bridge, opencv, numpy, pyyaml) come from
+# `rosdep install --from-paths src` and the package.xml files; only the
+# ROS-free analysis / plotting tooling is listed here.
+
+numpy>=1.23
+pyyaml>=5.4
+pandas>=1.5
+matplotlib>=3.5
+pytest>=7.0

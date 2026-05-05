@@ -1,0 +1,19 @@
+policy_runner:
+  ros__parameters:
+    cmd_topic: /alphabot2/cmd_vel
+    cell_topic: /robot_cell
+    maze_topic: /maze
+    control_rate_hz: 5.0
+    forward_speed: 0.10
+    turn_speed: 0.6
+
+fiducial_localizer:
+  ros__parameters:
+    image_topic: /image/compressed
+    cell_topic: /robot_cell
+    aruco_dict: DICT_4X4_50
+
+maze_publisher:
+  ros__parameters:
+    topic: /maze
+    service: /set_goal

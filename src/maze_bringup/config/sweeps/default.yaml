@@ -1,0 +1,18 @@
+algos: [vi, sarsa, qlearning]
+mazes:
+  - fixture_3x3
+  - fixture_5x5_corridor
+  - fixture_7x7_loop
+seeds: [0, 1, 2, 3, 4]
+mdp_config:
+  gamma: 0.99
+  slip_prob: 0.1
+td_config:
+  n_episodes: 2000
+  alpha0: 0.1
+  alpha_min: 0.001
+  alpha_tau: 50.0
+  epsilon0: 1.0
+  epsilon_min: 0.05
+  epsilon_anneal_frac: 0.5
+out: data
