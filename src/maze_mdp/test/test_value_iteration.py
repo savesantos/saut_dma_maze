@@ -11,17 +11,17 @@ def test_vi_converges_on_3x3():
     mdp = MDP(fixture_3x3(), MDPConfig(slip_prob=0.0, turn_fail_prob=0.0))
     V, pi, info = value_iteration(mdp, tol=1e-8)
     assert info.converged
-    # Goal cells have value 0 (absorbing, zero reward).
+    # Goal cells are absorbing with zero self-loop reward, so V == 0 there.
     gr, gc = mdp.maze.goal
     for h in range(4):
         assert V[mdp.encode(gr, gc, h)] == 0.0
-    # Non-goal states have V <= 0 (step costs); cells adjacent to the goal
-    # may reach V == 0 because the goal-transition reward replaces forward
-    # cost in the design's reward formula.
+    # Non-goal states have V bounded by goal_reward (the maximum one-step
+    # payoff reachable in the MDP).
     others = V[~mdp.terminal_states]
-    assert np.all(others <= 0.0)
-    # At least some far-from-goal states must be strictly negative.
-    assert (others < 0.0).any()
+    assert np.all(others <= mdp.config.goal_reward + 1e-9)
+    # Far-from-goal states must be strictly worse than the immediate-goal
+    # reward, since reaching the goal costs at least one step.
+    assert (others < mdp.config.goal_reward).any()
 
 
 def test_vi_bellman_error_monotone_nonincreasing():

@@ -133,7 +133,7 @@ class MDPConfig:
     forward_cost: float = 1.0
     turn_cost: float = 1.2
     bump_cost: float = 2.5
-    goal_reward: float = 0.0
+    goal_reward: float = 10.0
     # discounting
     gamma: float = 0.99
 ```
