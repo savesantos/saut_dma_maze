@@ -123,8 +123,10 @@ def plot(input_dir: Path, output_dir: Path) -> None:
         plt.Line2D([0], [0], color=_ACTION_COLOR[int(Action.TURN_RIGHT)], lw=2,
                    label='turn right'),
     ]
-    fig.legend(handles=handles, loc='lower center', ncol=3, frameon=False,
-               bbox_to_anchor=(0.5, -0.01))
+    legend = fig.legend(handles=handles, loc='lower center', ncol=3,
+                        frameon=True, bbox_to_anchor=(0.5, -0.01))
+    legend.get_frame().set_edgecolor('black')
+    legend.get_frame().set_linewidth(0.8)
     fig.tight_layout(rect=(0, 0.03, 1, 1))
     for ext in ('png', 'pdf'):
         fig.savefig(output_dir / f'policy_heatmap.{ext}', bbox_inches='tight')

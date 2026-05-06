@@ -25,6 +25,8 @@ setup(
             glob('config/markers/*.yaml')),
         (os.path.join('share', package_name, 'config', 'sweeps'),
             glob('config/sweeps/*.yaml')),
+        (os.path.join('share', package_name, 'config', 'rviz'),
+            glob('config/rviz/*.rviz')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,

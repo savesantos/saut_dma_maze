@@ -34,6 +34,8 @@ setup(
             'maze_publisher = maze_mdp.nodes.maze_publisher:main',
             'fiducial_localizer = maze_mdp.nodes.fiducial_localizer:main',
             'policy_runner = maze_mdp.nodes.policy_runner:main',
+            'maze_sim_node = maze_mdp.nodes.maze_sim_node:main',
+            'maze_viz_node = maze_mdp.nodes.maze_viz_node:main',
             'train = maze_mdp.experiments.runner:main',
             'sweep = maze_mdp.experiments.sweep:main',
         ],

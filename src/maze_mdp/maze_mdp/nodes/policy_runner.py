@@ -141,6 +141,20 @@ class PolicyRunner(Node):
     def _transition(self, new_state: _State) -> None:
         self.get_logger().info(f'{self._state.value} -> {new_state.value}')
         self._state = new_state
+        if new_state == _State.DONE:
+            # Stop publishing motion; main() will see ``self.done`` and exit
+            # the spin loop, which lets the launch's OnProcessExit fire.
+            self._timer.cancel()
+            self._cmd_pub.publish(Twist())
+            self.done = True
+
+    @property
+    def done(self) -> bool:
+        return getattr(self, '_done_flag', False)
+
+    @done.setter
+    def done(self, value: bool) -> None:
+        self._done_flag = bool(value)
 
 
 def main(args: list[str] | None = None) -> None:
@@ -148,10 +162,14 @@ def main(args: list[str] | None = None) -> None:
     rclpy.init(args=args)
     node = PolicyRunner()
     try:
-        rclpy.spin(node)
+        while rclpy.ok() and not node.done:
+            rclpy.spin_once(node, timeout_sec=0.1)
+    except KeyboardInterrupt:
+        pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':

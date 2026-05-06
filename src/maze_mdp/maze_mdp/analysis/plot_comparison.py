@@ -1,4 +1,21 @@
-"""Comparative steps-to-goal and success-rate plot, VI vs SARSA vs Q-Learning."""
+"""Comparative optimality plot: VI vs SARSA vs Q-Learning.
+
+For each policy we compute the **mean policy value over all reachable,
+non-terminal states** using closed-form policy evaluation
+(:func:`maze_mdp.policy.policy_value`). We then report the *sub-optimality
+gap*
+
+.. math:: \\Delta = \\overline{V^*} - \\overline{V^\\pi}
+
+per maze. VI sits at :math:`\\Delta = 0` by construction; RL methods rise
+above it by however much their converged policy underperforms. Because
+:math:`\\gamma < 1` and rewards are bounded, :math:`V^\\pi` is *always
+finite* even for policies that contain looping substates -- which is exactly
+why this metric is more informative than empirical steps-to-goal.
+
+The right panel reports an empirical success rate under the *stochastic* env
+to capture robustness to slip noise (complementary axis).
+"""
 
 from __future__ import annotations
 
@@ -10,32 +27,60 @@ import numpy as np
 
 from maze_mdp.analysis import style
 from maze_mdp.analysis.loaders import load_deployment_runs, load_training_runs
+from maze_mdp.policy import policy_value
 
 
-def _evaluate_policy_in_sim(
-    maze_name: str,
-    pi,
-    n_episodes: int = 50,
-    seed: int = 7,
-) -> tuple[float, float]:
+def _valid_state_mask(mdp) -> np.ndarray:
+    """Mask of non-terminal, non-wall states (where V^pi is meaningful)."""
+    walls = mdp.maze.walls
+    n_cols = mdp.maze.cols
+    valid = np.ones(mdp.n_states, dtype=bool)
+    for s in range(mdp.n_states):
+        cell, _h = divmod(s, 4)
+        r, c = divmod(cell, n_cols)
+        if walls[r, c]:
+            valid[s] = False
+    valid &= ~mdp.terminal_states
+    return valid
+
+
+def _build_mdp(maze_name: str):
+    from maze_mdp.mdp import MDP, MDPConfig
+    from maze_mdp.simulator import FIXTURES
+    return MDP(FIXTURES[maze_name](), MDPConfig())
+
+
+def _vi_mean_value(maze_name: str) -> float:
+    """Mean V* averaged over reachable non-terminal states."""
+    from maze_mdp.value_iteration import value_iteration
+    mdp = _build_mdp(maze_name)
+    _V, pi_star, _ = value_iteration(mdp)
+    V_star = policy_value(mdp, pi_star)
+    return float(V_star[_valid_state_mask(mdp)].mean())
+
+
+def _policy_mean_value(maze_name: str, pi) -> float:
+    mdp = _build_mdp(maze_name)
+    V = policy_value(mdp, pi)
+    return float(V[_valid_state_mask(mdp)].mean())
+
+
+def _empirical_success(maze_name: str, pi, n_episodes: int = 50, seed: int = 7) -> float:
+    """Empirical success rate from random starts under the stochastic env."""
     from maze_mdp.mdp import MDPConfig
     from maze_mdp.simulator import FIXTURES, GridMaze
     env = GridMaze(FIXTURES[maze_name](), config=MDPConfig(), max_steps=500)
     env.seed(seed)
-    steps = []
     successes = 0
     for _ in range(n_episodes):
         s = env.reset()
-        n = 0
         while True:
             s, _r, done, info = env.step(int(pi[s]))
-            n += 1
             if done:
                 if info['terminated']:
                     successes += 1
-                steps.append(n)
                 break
-    return float(np.mean(steps)), successes / n_episodes
+    return successes / n_episodes
 
 
 def plot(
@@ -54,28 +99,24 @@ def plot(
         if not deploy_df.empty:
             deploy_df = deploy_df[~deploy_df['maze'].isin(exclude_mazes)]
 
+    mazes = sorted(train_df['maze'].unique())
+    vi_value: dict[str, float] = {m: _vi_mean_value(m) for m in mazes}
+
     rows = []
     for _, run in train_df.iterrows():
         pi = run['policy'].get('pi')
         if pi is None:
             continue
-        steps, success = _evaluate_policy_in_sim(run['maze'], pi)
+        v_pi = _policy_mean_value(run['maze'], pi)
+        gap = vi_value[run['maze']] - v_pi          # >= 0; VI ~ 0
+        success = _empirical_success(run['maze'], pi)
         rows.append({
             'maze': run['maze'],
             'algo': run['algo'],
-            'source': 'sim',
-            'steps_to_goal': steps,
+            'mean_value': v_pi,
+            'subopt_gap': gap,
             'success_rate': success,
         })
-    if not deploy_df.empty:
-        for _, run in deploy_df.iterrows():
-            rows.append({
-                'maze': run.get('maze'),
-                'algo': run.get('algo'),
-                'source': 'hw',
-                'steps_to_goal': run.get('steps', np.nan),
-                'success_rate': float(bool(run.get('success', False))),
-            })
 
     import pandas as pd
     df = pd.DataFrame(rows)
@@ -83,25 +124,28 @@ def plot(
         raise SystemExit('Empty comparison dataframe.')
 
     fig, (ax_s, ax_r) = plt.subplots(1, 2, figsize=(10, 3.5))
-    mazes = sorted(df['maze'].unique())
     algos = ['vi', 'sarsa', 'qlearning']
     width = 0.25
     x = np.arange(len(mazes))
 
     for i, algo in enumerate(algos):
         sub = df[df['algo'] == algo]
-        steps_means = [sub[sub['maze'] == m]['steps_to_goal'].mean() for m in mazes]
+        gap_means = [sub[sub['maze'] == m]['subopt_gap'].mean() for m in mazes]
+        gap_stds = [sub[sub['maze'] == m]['subopt_gap'].std(ddof=0) for m in mazes]
         success_means = [sub[sub['maze'] == m]['success_rate'].mean() for m in mazes]
         offset = (i - 1) * width
-        ax_s.bar(x + offset, steps_means, width=width,
-                 color=style.ALGO_COLORS[algo], label=style.ALGO_LABELS[algo])
+        ax_s.bar(x + offset, gap_means, yerr=gap_stds, width=width,
+                 color=style.ALGO_COLORS[algo], label=style.ALGO_LABELS[algo],
+                 capsize=2.5, error_kw={'linewidth': 0.7})
         ax_r.bar(x + offset, success_means, width=width,
                  color=style.ALGO_COLORS[algo], label=style.ALGO_LABELS[algo])
 
-    for ax, ylabel in ((ax_s, 'Mean steps-to-goal'), (ax_r, 'Success rate')):
+    ax_s.axhline(0.0, color='black', linestyle='--', linewidth=0.7, alpha=0.7)
+    ax_s.set_ylabel(r'$\overline{V^*} - \overline{V^\pi}$  (0 = optimal)')
+    ax_r.set_ylabel('Success rate (stochastic env)')
+    for ax in (ax_s, ax_r):
         ax.set_xticks(x)
         ax.set_xticklabels(mazes, rotation=20, ha='right')
-        ax.set_ylabel(ylabel)
     ax_r.set_ylim(0.0, 1.05)
     ax_s.legend(loc='upper left')
 
@@ -127,3 +171,8 @@ def main(argv: list[str] | None = None) -> None:
 
 if __name__ == '__main__':
     main()
+
+
+# ``deploy_df`` is loaded but unused; keep loader call to surface missing-data
+# errors early and stay consistent with sister scripts.
+_ = load_deployment_runs

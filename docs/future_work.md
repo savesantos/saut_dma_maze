@@ -4,7 +4,51 @@ Items deliberately deferred from the initial production build. Listed here so
 graders see we knew about them and can ask "why didn't you do X" with a
 documented answer.
 
-## ROS integration enhancements (Option B)
+## High-fidelity ROS simulator (Gazebo / Gz Sim) — Option B
+
+We already ship two simulators that share the same MDP transition tensor:
+
+1. **Pure-Python micro-sim** — `maze_mdp.simulator.GridMaze`, ROS-free, used by
+   `colcon test` and the training harness.
+2. **ROS micro-sim (Option A, shipped)** — `maze_sim_node` under
+   `maze_mdp/nodes/`, which speaks the same topic graph as the AlphaBot2
+   (`/alphabot2/cmd_vel` in, `/robot_cell` + `/virtual_odometry` out) by
+   integrating Twist commands into discrete MDP steps. Closes the **interface**
+   gap: the entire `maze_publisher -> localizer -> policy_runner` pipeline
+   runs end-to-end without hardware, deterministically and seedable, and
+   deployment rosbags can be recorded just like on the real robot.
+
+Option B would add a **physics-level simulator** to also close the perception
+and continuous-control gaps:
+
+- **Stack:** Gz Sim (Ignition) on ROS 2 Humble via `ros_gz_sim` + `ros_gz_bridge`.
+  Gazebo Classic (`gazebo_ros_pkgs`) is simpler but EOL on Humble; not
+  recommended.
+- **Robot model:** SDF/URDF of the AlphaBot2 — two-wheel differential drive
+  (≈ 95 mm wheelbase, ≈ 42 mm wheel radius), caster, camera link with the
+  Pi Camera v2 intrinsics, `diff_drive` plugin consuming `/alphabot2/cmd_vel`
+  and a `camera` plugin publishing `/image/compressed`.
+- **World generation:** reuse `config/mazes/*.yaml` as the single source of
+  truth; a small Python script emits an SDF world with one box per `#` cell
+  and textured planes carrying the corresponding ArUco markers from
+  `config/markers/*.yaml` at known poses. This keeps the physics world,
+  the MDP, and the localizer marker map perfectly aligned.
+- **Topic graph:** identical to the real robot, so `fiducial_localizer` runs
+  unchanged on the simulated camera stream — that is the whole point. The
+  comparison "Option A vs. Option B vs. real robot" then isolates the
+  perception-and-control error from the MDP/RL error.
+- **Evaluation use case:** stress-test the localizer with controlled lighting,
+  motion blur, marker occlusion, and slip; sweep `slip_prob` to validate that
+  the MDP's ${0.8, 0.1, 0.1}$ default actually matches the simulated robot's
+  empirical transition statistics.
+- **Estimated effort:** 1-2 weeks (URDF tuning + world generator + launch
+  glue + parameter calibration). Heavy dependencies (`ros-humble-ros-gzgarden`
+  / `ros-humble-ros-gz`, GPU strongly preferred) and noticeably slower CI.
+- **Decision:** deferred until the MDP/RL contribution is locked. Option A
+  already gives reproducible end-to-end ROS runs; Option B would only sharpen
+  the sim-to-real story for the discussion section of the report.
+
+## Other ROS integration enhancements
 
 1. **`train_from_bag` node.** Replays a recorded rosbag of fiducial detections
    + cmd_vel and feeds the (s, a, r, s') tuples to SARSA / Q-Learning offline.

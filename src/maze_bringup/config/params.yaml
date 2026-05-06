@@ -17,3 +17,39 @@ maze_publisher:
   ros__parameters:
     topic: /maze
     service: /set_goal
+
+maze_sim_node:
+  ros__parameters:
+    maze_topic: /maze
+    cmd_topic: /alphabot2/cmd_vel
+    cell_topic: /robot_cell
+    odom_topic: /virtual_odometry
+    odom_frame_id: odom
+    base_frame_id: base_link
+    tick_rate_hz: 20.0
+    cell_size_m: 0.20
+    step_angle_rad: 1.5707963
+    slip_prob: 0.1
+    seed: -1
+    start_row: -1
+    start_col: -1
+    start_heading: 1
+
+maze_viz_node:
+  ros__parameters:
+    maze_topic: /maze
+    cell_topic: /robot_cell
+    odom_topic: /virtual_odometry
+    grid_topic: /maze_grid
+    walls_topic: /maze_walls
+    goal_topic: /maze_goal
+    robot_marker_topic: /robot_marker
+    trail_topic: /robot_trail
+    policy_arrows_topic: /policy_arrows
+    value_heatmap_topic: /value_heatmap
+    frame_id: map
+    base_frame_id: base_link
+    cell_size_m: 0.20
+    publish_tf: true
+    trail_max_poses: 1000
+    policy_path: ''
