@@ -221,4 +221,5 @@ __marimo__/
 /build/
 /install/
 /log/
-data/
+data/*
+!data/archive/
