@@ -15,7 +15,10 @@ def _train_and_score(algo_fn, seed=0):
     cfg_mdp = MDPConfig(slip_prob=0.0, turn_fail_prob=0.0)
     maze = fixture_3x3()
     env = GridMaze(maze, config=cfg_mdp, max_steps=200)
-    cfg = TDConfig(n_episodes=1500, alpha0=0.3, alpha_min=1e-3, alpha_tau=20.0,
+    # Budget sized for pessimistic Q init in _td.py (Q starts at
+    # -forward_cost / (1-γ) = -100, so early greedy steps are noisier and
+    # need more episodes to converge to V*).
+    cfg = TDConfig(n_episodes=4000, alpha0=0.3, alpha_min=1e-3, alpha_tau=20.0,
                    epsilon0=1.0, epsilon_min=0.05, epsilon_anneal_frac=0.5)
     Q, info = algo_fn(env, cfg, seed=seed)
     pi = greedy_policy(Q)

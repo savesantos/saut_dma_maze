@@ -92,7 +92,14 @@ def td_control(
         env.seed(seed)
     rng = env.rng  # reuse env RNG for action sampling -> single seed per run
     gamma = cfg.gamma if cfg.gamma is not None else env.mdp.gamma
-    Q = np.zeros((env.n_states, env.n_actions), dtype=np.float64)
+    # Pessimistic Q init: lower-bound discounted return assuming the agent
+    # only ever pays the per-step forward cost. This removes the "unvisited
+    # entry has Q = 0 = optimistic argmax" tie-break that biased ε-greedy
+    # toward less-tried actions at rarely-visited (e.g. corner) states.
+    # Goal-absorbing terminals are never bootstrapped from (the loop uses
+    # ``bootstrap = 0.0`` on ``done``) so their Q row value is harmless.
+    q_init = -env.mdp.config.forward_cost / (1.0 - gamma)
+    Q = np.full((env.n_states, env.n_actions), q_init, dtype=np.float64)
     visit_counts = np.zeros_like(Q, dtype=np.int64)
     info = TDInfo(seed=seed)
     start = perf_counter()

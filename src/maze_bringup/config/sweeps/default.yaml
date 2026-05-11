@@ -24,10 +24,5 @@ td_config_overrides:
   fixture_5x5_corridor:
     n_episodes: 5000
   fixture_7x7_loop:
-    # Bumped from 30k -> 80k and ε annealed over 80% (vs 50%) of the
-    # schedule: SARSA's on-policy bootstrap was still drifting at 30k
-    # on this maze (V*-Vπ ≈ 24, success 0.75). See
-    # data/archive/reward10/README.md for the diagnosis.
-    n_episodes: 80000
-    epsilon_anneal_frac: 0.8
+    n_episodes: 30000
 out: data
