@@ -35,6 +35,7 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
+from std_msgs.msg import Empty
 
 from maze_msgs.msg import CellPose, MazeGrid
 
@@ -74,6 +75,8 @@ class MazeSimNode(Node):
         self.declare_parameter('cmd_topic', '/alphabot2/cmd_vel')
         self.declare_parameter('cell_topic', '/robot_cell')
         self.declare_parameter('odom_topic', '/virtual_odometry')
+        self.declare_parameter('reset_topic', '/sim_reset')
+        self.declare_parameter('reset_to_topic', '/sim_reset_to')
         # Frames (used in Odometry header).
         self.declare_parameter('odom_frame_id', 'odom')
         self.declare_parameter('base_frame_id', 'base_link')
@@ -121,6 +124,18 @@ class MazeSimNode(Node):
             self._on_cmd,
             10,
         )
+        self._reset_sub = self.create_subscription(
+            Empty,
+            gp('reset_topic').get_parameter_value().string_value,
+            self._on_reset,
+            10,
+        )
+        self._reset_to_sub = self.create_subscription(
+            CellPose,
+            gp('reset_to_topic').get_parameter_value().string_value,
+            self._on_reset_to,
+            10,
+        )
         self._timer = self.create_timer(self._dt, self._tick)
 
         # Lazy state — populated on first MazeGrid.
@@ -160,6 +175,69 @@ class MazeSimNode(Node):
 
     def _on_cmd(self, msg: Twist) -> None:
         self._twist = msg
+
+    def _on_reset(self, _msg: Empty) -> None:
+        """
+        Re-sample the start state and resume simulating from scratch.
+
+        Honours any updated ``start_row`` / ``start_col`` / ``start_heading``
+        parameters (settable via ``ros2 param set /maze_sim_node ...``) so a
+        user can pick a new initial cell without restarting the launch.
+        """
+        if self._env is None:
+            self.get_logger().warn('Reset requested before maze loaded; ignoring.')
+            return
+        self._refresh_start_from_params()
+        self._env._start = self._start  # type: ignore[attr-defined]
+        self._env.reset()
+        self._after_reset('Sim reset; episode restarted.')
+
+    def _on_reset_to(self, msg: CellPose) -> None:
+        """Reset to the explicit (row, col, heading) carried in ``msg``."""
+        if self._env is None:
+            self.get_logger().warn('Reset-to requested before maze loaded; ignoring.')
+            return
+        target = (int(msg.row), int(msg.col), int(msg.heading))
+        if not self._is_valid_start(target):
+            self.get_logger().warn(
+                f'Reset-to target {target} is outside the maze, on a wall, '
+                'or on the goal; ignoring.'
+            )
+            return
+        self._env._start = target  # type: ignore[attr-defined]
+        self._env.reset()
+        self._after_reset(f'Sim reset to cell {target}.')
+
+    # ----------------------------------------------------------------- start
+    def _refresh_start_from_params(self) -> None:
+        gp = self.get_parameter
+        sr = int(gp('start_row').value)
+        sc = int(gp('start_col').value)
+        sh = int(gp('start_heading').value)
+        self._start = (sr, sc, sh) if sr >= 0 and sc >= 0 else None
+
+    def _is_valid_start(self, cell: tuple[int, int, int]) -> bool:
+        assert self._env is not None
+        r, c, h = cell
+        maze = self._env.maze
+        if not (0 <= r < maze.rows and 0 <= c < maze.cols):
+            return False
+        if maze.cells[r, c] == 1:  # WALL
+            return False
+        if (r, c) == maze.goal:
+            return False
+        if not 0 <= h < 4:
+            return False
+        return True
+
+    def _after_reset(self, log_msg: str) -> None:
+        self._twist = Twist()
+        self._lin_progress = 0.0
+        self._ang_progress = 0.0
+        self._done = False
+        self.get_logger().info(log_msg)
+        self._publish_cell()
+        self._publish_odom()
 
     # ------------------------------------------------------------------- tick
     def _tick(self) -> None:

@@ -21,6 +21,7 @@ import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
+from std_msgs.msg import Empty
 
 from maze_msgs.msg import CellPose, MazeGrid
 
@@ -53,6 +54,8 @@ class PolicyRunner(Node):
         self.declare_parameter('cmd_topic', '/alphabot2/cmd_vel')
         self.declare_parameter('cell_topic', '/robot_cell')
         self.declare_parameter('maze_topic', '/maze')
+        self.declare_parameter('reset_topic', '/sim_reset')
+        self.declare_parameter('exit_on_goal', False)
         self.declare_parameter('control_rate_hz', 5.0)
         self.declare_parameter('forward_speed', 0.1)
         self.declare_parameter('turn_speed', 0.6)
@@ -72,6 +75,8 @@ class PolicyRunner(Node):
         cmd_topic = self.get_parameter('cmd_topic').get_parameter_value().string_value
         cell_topic = self.get_parameter('cell_topic').get_parameter_value().string_value
         maze_topic = self.get_parameter('maze_topic').get_parameter_value().string_value
+        reset_topic = self.get_parameter('reset_topic').get_parameter_value().string_value
+        self._exit_on_goal = bool(self.get_parameter('exit_on_goal').value)
         rate_hz = float(self.get_parameter('control_rate_hz').value)
         self._fwd = float(self.get_parameter('forward_speed').value)
         self._turn = float(self.get_parameter('turn_speed').value)
@@ -83,7 +88,11 @@ class PolicyRunner(Node):
         self._cell_sub = self.create_subscription(
             CellPose, cell_topic, self._on_cell, 10
         )
-        self._timer = self.create_timer(1.0 / max(rate_hz, 1e-3), self._tick)
+        self._reset_sub = self.create_subscription(
+            Empty, reset_topic, self._on_reset, 10
+        )
+        self._tick_period = 1.0 / max(rate_hz, 1e-3)
+        self._timer = self.create_timer(self._tick_period, self._tick)
 
         self._state = _State.WAITING_MAZE
         self._n_cols: int | None = None
@@ -106,6 +115,20 @@ class PolicyRunner(Node):
         self._cell = (int(msg.row), int(msg.col), int(msg.heading))
         if self._state == _State.WAITING_CELL:
             self._transition(_State.RUNNING)
+
+    def _on_reset(self, _msg: Empty) -> None:
+        """Restart the policy from whatever cell the sim resets us to."""
+        self._cmd_pub.publish(Twist())
+        self.done = False
+        if self._timer.is_canceled():
+            self._timer.reset()
+        # Drop back into WAITING_CELL; the sim's post-reset CellPose will
+        # promote us to RUNNING via _on_cell.
+        if self._goal is None:
+            self._transition(_State.WAITING_MAZE)
+        else:
+            self._transition(_State.WAITING_CELL)
+        self.get_logger().info('Reset received; awaiting fresh cell pose.')
 
     # ------------------------------------------------------------------- tick
     def _tick(self) -> None:
@@ -142,11 +165,13 @@ class PolicyRunner(Node):
         self.get_logger().info(f'{self._state.value} -> {new_state.value}')
         self._state = new_state
         if new_state == _State.DONE:
-            # Stop publishing motion; main() will see ``self.done`` and exit
-            # the spin loop, which lets the launch's OnProcessExit fire.
-            self._timer.cancel()
             self._cmd_pub.publish(Twist())
-            self.done = True
+            if self._exit_on_goal:
+                # Headless / batch mode: stop ticking and let main() exit.
+                self._timer.cancel()
+                self.done = True
+            # Otherwise the timer keeps running but _tick() returns early
+            # because state is DONE, so we sit idle until /sim_reset.
 
     @property
     def done(self) -> bool:

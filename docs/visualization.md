@@ -100,6 +100,61 @@ Unlike `sim.launch.py`, this launch stays alive after `policy_runner`
 reaches the goal so you can inspect the heatmap, trail and final pose.
 Use Ctrl-C to exit when done.
 
+### Restart the run
+
+The viz launch keeps `maze_sim_node` and `policy_runner` alive after the
+goal so you can re-run the same policy from a fresh start cell without
+re-launching the stack. From any sourced shell:
+
+```bash
+ros2 topic pub --once /sim_reset std_msgs/msg/Empty '{}'
+```
+
+`maze_sim_node` re-samples a start cell (or uses the configured
+`start_row` / `start_col` / `start_heading` if set), republishes
+`/robot_cell`, and `policy_runner` resumes from `WAITING_CELL` →
+`RUNNING`. The trail in RViz keeps growing across resets — clear it
+with the **Reset** button in the RViz toolbar if you want a clean
+canvas.
+
+This works under `sim_viz.launch.py` and any custom launch that does
+not set `policy_runner`'s `exit_on_goal:=true` parameter (the headless
+`sim.launch.py` sets it to `True`, so it tears down on goal as before).
+
+### Choose the initial cell
+
+Pick a fixed start cell at launch time with `start_row`, `start_col`
+and `start_heading` (heading: `0`=N, `1`=E, `2`=S, `3`=W). Defaults are
+`-1 / -1 / 1`, which means *random free cell, heading East*:
+
+```bash
+ros2 launch maze_bringup sim_viz.launch.py \
+  maze_name:=$MAZE \
+  policy_path:=$POLICY \
+  start_row:=0 start_col:=0 start_heading:=1
+```
+
+To switch start cell while the launch is already running, set the
+parameters on the live node and request a reset:
+
+```bash
+ros2 param set /maze_sim_node start_row 2
+ros2 param set /maze_sim_node start_col 0
+ros2 param set /maze_sim_node start_heading 1
+ros2 topic pub --once /sim_reset std_msgs/msg/Empty '{}'
+```
+
+To jump to a one-off cell *without* persisting it as the new default
+start, publish a `CellPose` directly on `/sim_reset_to`:
+
+```bash
+ros2 topic pub --once /sim_reset_to maze_msgs/msg/CellPose \
+  '{row: 4, col: 0, heading: 0}'
+```
+
+Out-of-bounds cells, walls, and the goal cell are rejected with a
+warning in `maze_sim_node`'s log; nothing changes in that case.
+
 ### Troubleshooting: black RViz viewport on WSLg
 
 Under WSL2 / WSLg, `glxinfo | grep "OpenGL renderer"` reports a `D3D12`

@@ -27,6 +27,9 @@ def generate_launch_description() -> LaunchDescription:
     params_file = LaunchConfiguration('params_file')
     rviz_config = LaunchConfiguration('rviz_config')
     seed = LaunchConfiguration('seed')
+    start_row = LaunchConfiguration('start_row')
+    start_col = LaunchConfiguration('start_col')
+    start_heading = LaunchConfiguration('start_heading')
 
     maze_path = PathJoinSubstitution([
         bringup_share, 'config', 'mazes', [maze_name, '.yaml'],
@@ -46,6 +49,10 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('params_file', default_value=default_params),
         DeclareLaunchArgument('rviz_config', default_value=default_rviz),
         DeclareLaunchArgument('seed', default_value='-1'),
+        # Initial cell overrides for maze_sim_node. Negative => random reset.
+        DeclareLaunchArgument('start_row', default_value='-1'),
+        DeclareLaunchArgument('start_col', default_value='-1'),
+        DeclareLaunchArgument('start_heading', default_value='1'),  # E
 
         Node(
             package='maze_mdp',
@@ -59,7 +66,12 @@ def generate_launch_description() -> LaunchDescription:
             executable='maze_sim_node',
             name='maze_sim_node',
             output='screen',
-            parameters=[params_file, {'seed': seed}],
+            parameters=[params_file, {
+                'seed': seed,
+                'start_row': start_row,
+                'start_col': start_col,
+                'start_heading': start_heading,
+            }],
         ),
         Node(
             package='maze_mdp',
