@@ -114,9 +114,16 @@ def td_control(
 
         done = False
         while not done:
-            s_next, r, done, _info = env.step(a)
+            s_next, r, done, info_step = env.step(a)
+            # Distinguish goal absorption (true terminal, V_future = 0) from
+            # horizon truncation (episode cut off mid-trajectory by
+            # ``max_steps``). On truncation the future return is *not* zero —
+            # it is Q(s', a') under the current policy — so we must still
+            # bootstrap. Conflating the two biases the agent toward
+            # truncating instead of reaching the goal.
+            terminated = bool(info_step.get('terminated', done))
             a_next = epsilon_greedy(Q, s_next, eps, rng) if not done else 0
-            bootstrap = 0.0 if done else target_fn(Q, s_next, a_next)
+            bootstrap = 0.0 if terminated else target_fn(Q, s_next, a_next)
             target = r + gamma * bootstrap
             td_error = target - Q[s, a]
 
