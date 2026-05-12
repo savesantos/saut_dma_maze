@@ -10,6 +10,7 @@ import numpy as np
 
 from maze_mdp.analysis import style
 from maze_mdp.analysis.loaders import load_training_runs
+from maze_mdp.analysis.select_best_run import load_selected
 from maze_mdp.mdp import MDP, Action, Heading, MDPConfig
 from maze_mdp.policy import policy_value
 from maze_mdp.simulator import FIXTURES, WALL
@@ -77,7 +78,20 @@ def plot(input_dir: Path, output_dir: Path) -> None:
     df = load_training_runs(input_dir / 'training')
     if df.empty:
         raise SystemExit(f'No runs found under {input_dir / "training"}')
-    df = df.sort_values('seed').drop_duplicates(['maze', 'algo'])
+    # Pick the seed promoted by ``select_best_run`` so the heatmap matches
+    # whatever ``compare_viz`` / deployment is running. Fall back to the
+    # lowest seed only when no selection has been made yet.
+    def _pick(group: 'pd.DataFrame') -> 'pd.Series':  # type: ignore[name-defined]
+        algo = group['algo'].iloc[0]
+        maze = group['maze'].iloc[0]
+        record = load_selected(algo, maze, training_root=input_dir / 'training')
+        if record is not None:
+            seed = int(record['selected']['seed'])
+            match = group[group['seed'] == seed]
+            if not match.empty:
+                return match.iloc[0]
+        return group.sort_values('seed').iloc[0]
+    df = df.groupby(['maze', 'algo'], group_keys=False).apply(_pick).reset_index(drop=True)
 
     mazes = sorted(df['maze'].unique())
     algos = ['vi', 'sarsa', 'qlearning']

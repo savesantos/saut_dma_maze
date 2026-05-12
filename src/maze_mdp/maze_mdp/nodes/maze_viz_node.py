@@ -70,6 +70,63 @@ def _yaw_to_quat(yaw: float) -> tuple[float, float, float, float]:
     return 0.0, 0.0, math.sin(yaw / 2.0), math.cos(yaw / 2.0)
 
 
+def build_car_marker_array(
+    *,
+    frame_id: str,
+    stamp,
+    namespace: str,
+    base_id: int,
+    x: float,
+    y: float,
+    yaw: float,
+    cell_size: float,
+    body_color: ColorRGBA,
+    cabin_color: ColorRGBA,
+    front_color: ColorRGBA,
+) -> MarkerArray:
+    """Compose a tiny "car" out of three CUBE markers, oriented by ``yaw``.
+
+    The three markers share ``namespace`` but use successive IDs starting at
+    ``base_id`` so multiple cars can coexist by allocating disjoint ID ranges
+    (or by using different namespaces).
+    """
+    qx, qy, qz, qw = _yaw_to_quat(yaw)
+    arr = MarkerArray()
+    s = float(cell_size)
+    # Local-frame offsets (x = forward, y = left).
+    parts = [
+        # (dx, dy, dz, sx, sy, sz, color)
+        (0.0, 0.0, s * 0.10, s * 0.55, s * 0.32, s * 0.16, body_color),  # body
+        (-s * 0.08, 0.0, s * 0.22, s * 0.30, s * 0.26, s * 0.12, cabin_color),  # cabin
+        (s * 0.30, 0.0, s * 0.10, s * 0.10, s * 0.32, s * 0.05, front_color),  # bumper/light
+    ]
+    cy = math.cos(yaw)
+    sy = math.sin(yaw)
+    for i, (dx, dy, dz, sx, sxy, sz, color) in enumerate(parts):
+        m = Marker()
+        m.header.frame_id = frame_id
+        m.header.stamp = stamp
+        m.ns = namespace
+        m.id = base_id + i
+        m.type = Marker.CUBE
+        m.action = Marker.ADD
+        # Rotate (dx, dy) by yaw before adding to the cell centre so the
+        # cabin / front sit on the correct side regardless of heading.
+        m.pose.position.x = float(x + cy * dx - sy * dy)
+        m.pose.position.y = float(y + sy * dx + cy * dy)
+        m.pose.position.z = float(dz)
+        m.pose.orientation.x = qx
+        m.pose.orientation.y = qy
+        m.pose.orientation.z = qz
+        m.pose.orientation.w = qw
+        m.scale.x = sx
+        m.scale.y = sxy
+        m.scale.z = sz
+        m.color = color
+        arr.markers.append(m)
+    return arr
+
+
 class MazeVizNode(Node):
     """Bridge custom maze topics to RViz-friendly visualization messages."""
 
@@ -124,7 +181,9 @@ class MazeVizNode(Node):
             Marker, gp('goal_topic').get_parameter_value().string_value, _latched_qos()
         )
         self._robot_pub = self.create_publisher(
-            Marker, gp('robot_marker_topic').get_parameter_value().string_value, 10
+            MarkerArray,
+            gp('robot_marker_topic').get_parameter_value().string_value,
+            10,
         )
         self._trail_pub = self.create_publisher(
             PathMsg, gp('trail_topic').get_parameter_value().string_value, 10
@@ -171,6 +230,9 @@ class MazeVizNode(Node):
         self._trail.header.frame_id = self._frame
         self._last_cell: tuple[int, int] | None = None
         self._policy_loaded = False
+        # Last decoded maze layout (rows, cols int8 with values _FREE/_WALL/_GOAL).
+        # Needed by the overlay builders to mask walls and the goal cell.
+        self._cells: np.ndarray | None = None
         # Cached latched payloads (refreshed by ``_on_maze``).
         self._cached_walls: MarkerArray | None = None
         self._cached_goal: Marker | None = None
@@ -201,6 +263,7 @@ class MazeVizNode(Node):
         rows, cols = int(msg.rows), int(msg.cols)
         cells = np.asarray(msg.cells, dtype=np.int8).reshape(rows, cols)
         self._rows, self._cols = rows, cols
+        self._cells = cells
         self._publish_grid(cells)
         self._publish_walls(cells)
         self._publish_goal(cells)
@@ -327,30 +390,28 @@ class MazeVizNode(Node):
         r, c, h = int(msg.row), int(msg.col), int(msg.heading)
         x, y = self._cell_xy(r, c)
         yaw = _HEADING_YAW.get(h, 0.0)
-        qx, qy, qz, qw = _yaw_to_quat(yaw)
         stamp = msg.header.stamp if msg.header.stamp.sec or msg.header.stamp.nanosec \
             else self.get_clock().now().to_msg()
 
-        # Robot marker (arrow at the discrete cell pose).
-        m = Marker()
-        m.header.frame_id = self._frame
-        m.header.stamp = stamp
-        m.ns = 'robot'
-        m.id = 0
-        m.type = Marker.ARROW
-        m.action = Marker.ADD
-        m.pose.position.x = x
-        m.pose.position.y = y
-        m.pose.position.z = self._cell * 0.15
-        m.pose.orientation.x = qx
-        m.pose.orientation.y = qy
-        m.pose.orientation.z = qz
-        m.pose.orientation.w = qw
-        m.scale.x = self._cell * 0.7
-        m.scale.y = self._cell * 0.18
-        m.scale.z = self._cell * 0.18
-        m.color = ColorRGBA(r=0.1, g=0.4, b=1.0, a=1.0)
-        self._robot_pub.publish(m)
+        # Robot "car": body cube + cabin cube + small front wedge so the
+        # heading is unambiguous even when the camera is top-down.
+        body_color = ColorRGBA(r=0.10, g=0.40, b=1.00, a=1.0)
+        cabin_color = ColorRGBA(r=0.05, g=0.20, b=0.55, a=1.0)
+        front_color = ColorRGBA(r=1.00, g=0.95, b=0.30, a=1.0)
+        car = build_car_marker_array(
+            frame_id=self._frame,
+            stamp=stamp,
+            namespace='robot',
+            base_id=0,
+            x=x,
+            y=y,
+            yaw=yaw,
+            cell_size=self._cell,
+            body_color=body_color,
+            cabin_color=cabin_color,
+            front_color=front_color,
+        )
+        self._robot_pub.publish(car)
 
         # Append to the trail on every fresh cell transition.
         if self._last_cell != (r, c):
@@ -422,31 +483,71 @@ class MazeVizNode(Node):
             heatmap = self._build_value_heatmap(V, rows, cols)
             self._cached_heatmap = heatmap
             self._heatmap_pub.publish(heatmap)
+        elif V is not None:
+            self.get_logger().warn(
+                f'V size {V.size} != expected {n_states}; heatmap skipped.'
+            )
 
     def _build_policy_arrows(self, pi: np.ndarray, rows: int, cols: int) -> MarkerArray:
-        """One small arrow per (cell, heading); colour encodes the action."""
+        """
+        Render one arrow per ``(cell, heading)`` for every reachable cell.
+
+        Walls and the goal cell are skipped (they carry no decision).
+        Each arrow is anchored on the side of the cell that matches the
+        state heading (so the four headings don't overlap), and points
+        toward the heading the agent will be facing **after applying the
+        chosen action** — i.e. it visually shows where the policy sends
+        the agent. Colour also encodes the action as a redundant cue:
+
+        * green  = FORWARD       (arrow keeps the state heading)
+        * blue   = TURN_LEFT     (arrow rotated 90 deg counter-clockwise)
+        * orange = TURN_RIGHT    (arrow rotated 90 deg clockwise)
+        """
         arr = MarkerArray()
         marker_id = 0
-        # Slight in-cell offsets so the four headings don't overlap.
+        # Slight in-cell offsets so the four headings don't overlap. The
+        # offset direction matches the state heading so the arrow tail sits
+        # on the side of the cell that the agent is facing.
         offsets = {
-            int(Heading.N): (0.0, +0.18),
-            int(Heading.E): (+0.18, 0.0),
-            int(Heading.S): (0.0, -0.18),
-            int(Heading.W): (-0.18, 0.0),
+            int(Heading.N): (0.0, +0.22),
+            int(Heading.E): (+0.22, 0.0),
+            int(Heading.S): (0.0, -0.22),
+            int(Heading.W): (-0.22, 0.0),
         }
         action_color = {
-            int(Action.FORWARD): ColorRGBA(r=0.1, g=0.85, b=0.1, a=0.9),
-            int(Action.TURN_LEFT): ColorRGBA(r=0.2, g=0.4, b=1.0, a=0.9),
-            int(Action.TURN_RIGHT): ColorRGBA(r=1.0, g=0.4, b=0.2, a=0.9),
+            int(Action.FORWARD): ColorRGBA(r=0.1, g=0.85, b=0.1, a=0.95),
+            int(Action.TURN_LEFT): ColorRGBA(r=0.2, g=0.4, b=1.0, a=0.95),
+            int(Action.TURN_RIGHT): ColorRGBA(r=1.0, g=0.4, b=0.2, a=0.95),
         }
+        # Resulting heading after each action, given the state heading ``h``.
+        # FORWARD keeps the heading (the agent moves into the next cell but
+        # still faces the same way). TURNs rotate in place.
+        action_to_resulting_h = {
+            int(Action.FORWARD): lambda h: h,
+            int(Action.TURN_LEFT): lambda h: (h - 1) % 4,
+            int(Action.TURN_RIGHT): lambda h: (h + 1) % 4,
+        }
+        cells = self._cells
         stamp = self.get_clock().now().to_msg()
+        goal_cell: tuple[int, int] | None = None
+        if cells is not None:
+            goals = np.argwhere(cells == _GOAL)
+            if goals.size:
+                goal_cell = (int(goals[0, 0]), int(goals[0, 1]))
         for r in range(rows):
             for c in range(cols):
+                # Skip walls and the absorbing goal cell — neither carries
+                # a meaningful policy decision for the user to inspect.
+                if cells is not None and int(cells[r, c]) == _WALL:
+                    continue
+                if goal_cell is not None and (r, c) == goal_cell:
+                    continue
                 base_x, base_y = self._cell_xy(r, c)
                 for h in range(4):
                     s = (r * cols + c) * 4 + h
                     a = int(pi[s])
-                    yaw = _HEADING_YAW[h]
+                    res_h = action_to_resulting_h.get(a, lambda hh: hh)(h)
+                    yaw = _HEADING_YAW[res_h]
                     qx, qy, qz, qw = _yaw_to_quat(yaw)
                     ox, oy = offsets[h]
                     m = Marker()
@@ -464,7 +565,7 @@ class MazeVizNode(Node):
                     m.pose.orientation.y = qy
                     m.pose.orientation.z = qz
                     m.pose.orientation.w = qw
-                    m.scale.x = self._cell * 0.30
+                    m.scale.x = self._cell * 0.28
                     m.scale.y = self._cell * 0.06
                     m.scale.z = self._cell * 0.06
                     m.color = action_color.get(
@@ -474,22 +575,63 @@ class MazeVizNode(Node):
         return arr
 
     def _build_value_heatmap(self, V: np.ndarray, rows: int, cols: int) -> MarkerArray:
-        """One translucent CUBE per cell; colour scaled by max-over-heading V."""
+        """
+        Render one translucent CUBE per non-wall cell using ``max_h V(s)``.
+
+        Walls are skipped entirely (their state values are either an
+        absorbing 0 from VI or the pessimistic ``q_init`` from SARSA /
+        Q-Learning, neither of which carries information). The goal cell
+        is forced to the top of the colour scale so it stands out as the
+        attractor regardless of the algorithm's terminal-state value
+        convention.
+        """
         v_per_cell = V.reshape(rows, cols, 4).max(axis=2)
-        finite = v_per_cell[np.isfinite(v_per_cell)]
-        if finite.size == 0:
+        cells = self._cells
+        # Build a mask of cells whose value should drive the colour scale
+        # (free + goal, but not walls). When ``cells`` is unavailable for
+        # any reason we fall back to all finite cells to preserve the old
+        # behaviour.
+        if cells is not None:
+            non_wall = cells != _WALL
+        else:
+            non_wall = np.ones_like(v_per_cell, dtype=bool)
+        valid = non_wall & np.isfinite(v_per_cell)
+        if not np.any(valid):
             return MarkerArray()
-        vmin, vmax = float(finite.min()), float(finite.max())
+        # Locate the goal cell so we can pin it to vmax even when the
+        # underlying terminal-state Q row is left at its pessimistic init.
+        goal_cell: tuple[int, int] | None = None
+        if cells is not None:
+            goals = np.argwhere(cells == _GOAL)
+            if goals.size:
+                goal_cell = (int(goals[0, 0]), int(goals[0, 1]))
+        # Compute the normalisation range from non-wall cells *excluding*
+        # the goal: the goal's stored V is not comparable across algorithms
+        # (VI: 0; TD: q_init) and would otherwise dominate vmin/vmax.
+        scale_mask = valid.copy()
+        if goal_cell is not None:
+            scale_mask[goal_cell] = False
+        if np.any(scale_mask):
+            scale_vals = v_per_cell[scale_mask]
+            vmin = float(scale_vals.min())
+            vmax = float(scale_vals.max())
+        else:
+            vmin = float(v_per_cell[valid].min())
+            vmax = float(v_per_cell[valid].max())
         span = max(vmax - vmin, 1e-9)
         arr = MarkerArray()
         stamp = self.get_clock().now().to_msg()
         marker_id = 0
         for r in range(rows):
             for c in range(cols):
-                v = float(v_per_cell[r, c])
-                if not np.isfinite(v):
+                if not valid[r, c]:
                     continue
-                t = (v - vmin) / span  # 0..1
+                if goal_cell is not None and (r, c) == goal_cell:
+                    t = 1.0  # always render the goal at the top of the scale
+                else:
+                    v = float(v_per_cell[r, c])
+                    t = (v - vmin) / span
+                    t = max(0.0, min(1.0, t))
                 m = Marker()
                 m.header.frame_id = self._frame
                 m.header.stamp = stamp

@@ -36,6 +36,7 @@ setup(
             'policy_runner = maze_mdp.nodes.policy_runner:main',
             'maze_sim_node = maze_mdp.nodes.maze_sim_node:main',
             'maze_viz_node = maze_mdp.nodes.maze_viz_node:main',
+            'compare_node = maze_mdp.nodes.compare_node:main',
             'train = maze_mdp.experiments.runner:main',
             'sweep = maze_mdp.experiments.sweep:main',
         ],

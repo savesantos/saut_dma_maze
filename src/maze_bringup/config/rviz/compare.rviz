@@ -19,13 +19,6 @@ Visualization Manager:
       Color: 160; 160; 164
       Alpha: 0.4
       Plane: XY
-    - Class: rviz_default_plugins/TF
-      Name: TF
-      Enabled: true
-      Show Names: false
-      Show Axes: true
-      Show Arrows: false
-      Frame Timeout: 60
     - Class: rviz_default_plugins/MarkerArray
       Name: MazeWalls
       Enabled: true
@@ -49,70 +42,16 @@ Visualization Manager:
       Namespaces:
         {}
     - Class: rviz_default_plugins/MarkerArray
-      Name: ValueHeatmap
+      Name: CompareAgents
       Enabled: true
       Topic:
-        Value: /value_heatmap
-        Depth: 1
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Durability Policy: Transient Local
-      Namespaces:
-        {}
-    - Class: rviz_default_plugins/MarkerArray
-      Name: PolicyArrows
-      Enabled: false
-      Topic:
-        Value: /policy_arrows
-        Depth: 1
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Durability Policy: Transient Local
-      Namespaces:
-        {}
-    - Class: rviz_default_plugins/MarkerArray
-      Name: RobotCell
-      Enabled: true
-      Topic:
-        Value: /robot_marker
+        Value: /compare/markers
         Depth: 5
         History Policy: Keep Last
         Reliability Policy: Reliable
         Durability Policy: Volatile
       Namespaces:
         {}
-    - Class: rviz_default_plugins/Path
-      Name: Trail
-      Enabled: true
-      Topic:
-        Value: /robot_trail
-        Depth: 5
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Durability Policy: Volatile
-      Color: 30; 144; 255
-      Line Width: 0.02
-      Pose Style: None
-    - Class: rviz_default_plugins/Odometry
-      Name: VirtualOdometry
-      Enabled: true
-      Topic:
-        Value: /virtual_odometry
-        Depth: 50
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Durability Policy: Volatile
-      Position Tolerance: 0.01
-      Angle Tolerance: 0.01
-      Keep: 200
-      Shape:
-        Value: Arrow
-        Color: 255; 25; 0
-        Alpha: 0.6
-        Shaft Length: 0.05
-        Shaft Radius: 0.01
-        Head Length: 0.03
-        Head Radius: 0.02
   Tools:
     - Class: rviz_default_plugins/MoveCamera
     - Class: rviz_default_plugins/Select
@@ -122,12 +61,12 @@ Visualization Manager:
     Current:
       Class: rviz_default_plugins/Orbit
       Name: Current View
-      Distance: 3.0
+      Distance: 3.5
       Focal Point:
         X: 0.4
         Y: -0.4
         Z: 0.0
-      Pitch: 1.5
+      Pitch: 1.2
       Yaw: 0.0
       Near Clip Distance: 0.01
       Target Frame: <Fixed Frame>

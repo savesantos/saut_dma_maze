@@ -92,9 +92,26 @@ RViz displays:
 - **RobotCell** — blue arrow at the discrete MDP pose from `/robot_cell`.
 - **VirtualOdometry** — red arrow trail of the continuous pose.
 - **Trail** — accumulated cell-to-cell path.
-- **ValueHeatmap** — purple→yellow tint per cell using `max_h V(s)`.
+- **ValueHeatmap** — purple→yellow tint per cell using $\max_h V(s)$.
+  Walls are skipped entirely.
+  The colour scale is normalised over the free cells only (the goal cell
+  is pinned to the top of the scale and the walls are excluded), so the
+  heatmap reads the same way regardless of the algorithm's terminal /
+  unvisited state convention (VI's $V_\text{terminal}=0$ vs. the TD
+  pessimistic $q_\text{init}$).
 - **PolicyArrows** — disabled by default; tick it in the **Displays** panel
-  to render one small arrow per `(cell, heading)` colour-coded by action.
+  to render one small arrow per `(cell, heading)` for every reachable cell
+  (walls and the goal cell are skipped). The arrow is anchored on the side
+  of the cell that matches the *state heading* (so the four headings don't
+  overlap) and points toward the heading the agent will be facing **after
+  applying the chosen action** — i.e. it visually shows where the policy
+  sends the agent. Colour also encodes the action as a redundant cue:
+
+  | Action      | Arrow direction (from state heading $h$) | Colour |
+  | ----------- | ---------------------------------------- | ------ |
+  | FORWARD     | $h$ (unchanged)                          | green  |
+  | TURN_LEFT   | $(h - 1) \bmod 4$                        | blue   |
+  | TURN_RIGHT  | $(h + 1) \bmod 4$                        | orange |
 
 Unlike `sim.launch.py`, this launch stays alive after `policy_runner`
 reaches the goal so you can inspect the heatmap, trail and final pose.
@@ -193,6 +210,55 @@ Displays panel. The bundled
 specifies the field on every display — keep it there if you hand-edit the
 file.
 
+## 3b. Compare three policies side by side
+
+`compare_viz.launch.py` brings up `maze_publisher`, `maze_viz_node`,
+`compare_node`, and `rviz2` with the bundled `compare.rviz`. It runs all
+three precomputed policies (Value Iteration, SARSA, Q-Learning) at the
+same time, against independent stochastic copies of the **same maze**,
+starting from the **same cell**. Each agent renders as a small colored
+"car" (body + cabin + bumper) plus a same-coloured trail:
+
+| Policy          | Color  |
+| --------------- | ------ |
+| Value Iteration | blue   |
+| SARSA           | orange |
+| Q-Learning      | green  |
+
+Pick the same `(maze, seed)` triplet you trained, then point the launch
+at the three `policy.npz` files (absolute paths required):
+
+```bash
+MAZE=fixture_5x5_corridor
+SEED=0
+VI=$PWD/$(ls -td data/training/vi/$MAZE/*-seed$SEED        | head -1)/policy.npz
+SA=$PWD/$(ls -td data/training/sarsa/$MAZE/*-seed$SEED     | head -1)/policy.npz
+QL=$PWD/$(ls -td data/training/qlearning/$MAZE/*-seed$SEED | head -1)/policy.npz
+
+ros2 launch maze_bringup compare_viz.launch.py \
+  maze_name:=$MAZE \
+  vi_policy:=$VI \
+  sarsa_policy:=$SA \
+  qlearning_policy:=$QL \
+  start_row:=0 start_col:=0 start_heading:=1 \
+  seed:=42
+```
+
+Restart all three agents from a fresh shared start cell with the same
+reset topic the single-robot launch uses:
+
+```bash
+ros2 topic pub --once /sim_reset std_msgs/msg/Empty '{}'
+```
+
+Override the start cell while the launch is running with
+`ros2 param set /compare_node start_row …` (same parameter names as
+`maze_sim_node`) followed by the reset publish above. Tune shared slip
+noise via `slip_prob:=…` and the simulation step rate via
+`tick_rate_hz:=…`. Each agent gets its own RNG seeded
+deterministically from `seed`, so any divergence between trails is
+purely due to policy disagreement, not noise.
+
 ## 4. Headless variants
 
 Skip RViz for sweeps and CI. The original launch keeps the same CLI:
@@ -232,3 +298,41 @@ These modules live under
 [src/maze_mdp/maze_mdp/analysis/](../src/maze_mdp/maze_mdp/analysis/) and
 are ROS-free (matplotlib only), so they run from any shell with the venv
 sourced — no `install/setup.bash` needed.
+
+### What each figure shows
+
+All plots aggregate over the 5 training seeds (`0..4`) produced by
+[default.yaml](../src/maze_bringup/config/sweeps/default.yaml).
+
+- **`convergence.{png,pdf}`** — one subplot per maze (3.5"×4.5"). Per-episode
+  return from `metrics.csv`, plotted as the mean across the 5 seeds with a
+  ±1 std shaded band. SARSA and Q-Learning only (VI is not episodic). Reads
+  training artifacts only — no rollouts.
+- **`steps_curve.{png,pdf}`** — one subplot per maze. Steps-to-goal per
+  episode (same `metrics.csv` source), smoothed with a centered moving
+  average (window `25` by default), mean ± std over seeds. SARSA and
+  Q-Learning only.
+- **`policy_heatmap.{png,pdf}`** — grid of subplots `algos × mazes`. For
+  each `(algo, maze)`, the first seed's policy is used: cells are coloured
+  by $\max_h V(s)$ (closed-form policy evaluation of the saved $\pi$, not
+  the TD value table) and 4 small arrows per cell encode the action chosen
+  at each heading (same colour convention as the RViz **PolicyArrows**
+  display). Walls and the goal are masked.
+- **`comparison.{png,pdf}`** — two side-by-side bar charts (10"×3.5"),
+  one group of 3 bars (VI / SARSA / Q-Learning) per maze.
+  - *Left panel — sub-optimality gap.* For every run, compute
+    $\Delta = \overline{V^\*} - \overline{V^\pi}$ where both means are
+    taken over reachable, non-terminal, non-wall states using closed-form
+    policy evaluation. Bar = mean across the 5 seeds, error bar = std
+    (population, `ddof=0`). VI sits at $\Delta = 0$ by construction.
+  - *Right panel — empirical success rate.* For every trained policy, run
+    50 episodes in the **stochastic** `GridMaze` env (`slip_prob=0.1`)
+    from random start cells, with a fixed evaluation RNG seed `7` that
+    governs **both start sampling and slip noise** (see
+    `_empirical_success` in
+    [plot_comparison.py](../src/maze_mdp/maze_mdp/analysis/plot_comparison.py)).
+    Episode cap = 500 steps; a non-terminal cap counts as failure. Bar =
+    mean of the 5 per-seed success rates; no error bars are drawn on
+    this panel by default.
+  - `fixture_3x3` is excluded by default (trivially saturated); override
+    with `--exclude-mazes`.
