@@ -313,26 +313,32 @@ All plots aggregate over the 5 training seeds (`0..4`) produced by
   average (window `25` by default), mean ± std over seeds. SARSA and
   Q-Learning only.
 - **`policy_heatmap.{png,pdf}`** — grid of subplots `algos × mazes`. For
-  each `(algo, maze)`, the first seed's policy is used: cells are coloured
-  by $\max_h V(s)$ (closed-form policy evaluation of the saved $\pi$, not
-  the TD value table) and 4 small arrows per cell encode the action chosen
-  at each heading (same colour convention as the RViz **PolicyArrows**
-  display). Walls and the goal are masked.
+  each `(algo, maze)` the **best seed** is picked by
+  `select_best_run` (held-out evaluation, see
+  [select_best_run.py](../src/maze_mdp/maze_mdp/analysis/select_best_run.py))
+  via `data/training/<algo>/<maze>/selected.json`. Cells are coloured by
+  $\max_h V(s)$ (closed-form policy evaluation of the saved $\pi$, not the
+  TD value table) and 4 small arrows per cell encode the action chosen at
+  each heading (same colour convention as the RViz **PolicyArrows**
+  display). Walls and the goal are masked. Run
+  `python3 -m maze_mdp.analysis.select_best_run` before regenerating
+  the heatmap if you added new training runs.
 - **`comparison.{png,pdf}`** — two side-by-side bar charts (10"×3.5"),
-  one group of 3 bars (VI / SARSA / Q-Learning) per maze.
+  one group of 3 bars (VI / SARSA / Q-Learning) per maze. Both panels
+  aggregate over the 5 training seeds: bar = mean, error bar = population
+  std (`ddof=0`).
   - *Left panel — sub-optimality gap.* For every run, compute
     $\Delta = \overline{V^\*} - \overline{V^\pi}$ where both means are
     taken over reachable, non-terminal, non-wall states using closed-form
-    policy evaluation. Bar = mean across the 5 seeds, error bar = std
-    (population, `ddof=0`). VI sits at $\Delta = 0$ by construction.
-  - *Right panel — empirical success rate.* For every trained policy, run
-    50 episodes in the **stochastic** `GridMaze` env (`slip_prob=0.1`)
-    from random start cells, with a fixed evaluation RNG seed `7` that
-    governs **both start sampling and slip noise** (see
-    `_empirical_success` in
-    [plot_comparison.py](../src/maze_mdp/maze_mdp/analysis/plot_comparison.py)).
-    Episode cap = 500 steps; a non-terminal cap counts as failure. Bar =
-    mean of the 5 per-seed success rates; no error bars are drawn on
-    this panel by default.
+    policy evaluation. VI sits at $\Delta = 0$ by construction.
+  - *Right panel — empirical success rate.* Each trained policy is rolled
+    out for **1000 episodes** in the stochastic `GridMaze`
+    (`slip_prob=0.1`) from random start cells, with a single fixed
+    evaluation RNG seed (`20260512`, shared with `select_best_run`) that
+    governs both start sampling and slip noise. Episode cap = 500 steps;
+    a non-terminal cap counts as failure. With $n=1000$ the per-policy
+    Monte-Carlo SE is $\le 1/(2\sqrt{n}) \approx 1.6\%$, so the std bars
+    across the 5 seeds reflect *training* variance (which is what we
+    want to compare), not eval noise.
   - `fixture_3x3` is excluded by default (trivially saturated); override
     with `--exclude-mazes`.

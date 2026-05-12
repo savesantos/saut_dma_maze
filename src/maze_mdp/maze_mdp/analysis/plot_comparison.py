@@ -65,8 +65,26 @@ def _policy_mean_value(maze_name: str, pi) -> float:
     return float(V[_valid_state_mask(mdp)].mean())
 
 
-def _empirical_success(maze_name: str, pi, n_episodes: int = 50, seed: int = 7) -> float:
-    """Empirical success rate from random starts under the stochastic env."""
+_EVAL_SEED = 20260512  # shared with select_best_run for a single source of truth
+_EVAL_EPISODES = 1000
+
+
+def _empirical_success(
+    maze_name: str,
+    pi,
+    n_episodes: int = _EVAL_EPISODES,
+    seed: int = _EVAL_SEED,
+) -> float:
+    """Empirical success rate from random starts under the stochastic env.
+
+    Uses a fixed evaluation seed so every trained policy is scored against
+    the *same* sequence of (start cell, slip noise) draws. With
+    ``n_episodes`` large enough (default 1000), the residual Monte-Carlo SE
+    on each per-policy estimate is :math:`\\le \\tfrac{1}{2\\sqrt{n}} \\approx 1.6\\%`,
+    so the variance reported in the bar plot reflects variability across
+    the *trained policies* (i.e. across training seeds) rather than eval
+    noise.
+    """
     from maze_mdp.mdp import MDPConfig
     from maze_mdp.simulator import FIXTURES, GridMaze
     env = GridMaze(FIXTURES[maze_name](), config=MDPConfig(), max_steps=500)
@@ -133,12 +151,14 @@ def plot(
         gap_means = [sub[sub['maze'] == m]['subopt_gap'].mean() for m in mazes]
         gap_stds = [sub[sub['maze'] == m]['subopt_gap'].std(ddof=0) for m in mazes]
         success_means = [sub[sub['maze'] == m]['success_rate'].mean() for m in mazes]
+        success_stds = [sub[sub['maze'] == m]['success_rate'].std(ddof=0) for m in mazes]
         offset = (i - 1) * width
         ax_s.bar(x + offset, gap_means, yerr=gap_stds, width=width,
                  color=style.ALGO_COLORS[algo], label=style.ALGO_LABELS[algo],
                  capsize=2.5, error_kw={'linewidth': 0.7})
-        ax_r.bar(x + offset, success_means, width=width,
-                 color=style.ALGO_COLORS[algo], label=style.ALGO_LABELS[algo])
+        ax_r.bar(x + offset, success_means, yerr=success_stds, width=width,
+                 color=style.ALGO_COLORS[algo], label=style.ALGO_LABELS[algo],
+                 capsize=2.5, error_kw={'linewidth': 0.7})
 
     ax_s.axhline(0.0, color='black', linestyle='--', linewidth=0.7, alpha=0.7)
     ax_s.set_ylabel(r'$\overline{V^*} - \overline{V^\pi}$  (0 = optimal)')
