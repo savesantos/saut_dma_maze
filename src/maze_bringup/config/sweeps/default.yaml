@@ -24,5 +24,11 @@ td_config_overrides:
   fixture_5x5_corridor:
     n_episodes: 5000
   fixture_7x7_loop:
-    n_episodes: 30000
+    # Combined with pessimistic Q init in _td.py: extended budget
+    # (80k episodes, ε annealed over 80% of training) on top of the
+    # algorithm-side fix, to test whether the residual SARSA gap on
+    # 7x7 (≈3 with pessimistic init alone) is asymptotic or
+    # under-trained. See data/archive/reward10_pessimistic_init.
+    n_episodes: 80000
+    epsilon_anneal_frac: 0.8
 out: data
