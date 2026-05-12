@@ -13,11 +13,26 @@ from maze_mdp.analysis.loaders import load_training_runs
 
 
 def _smooth(x: np.ndarray, window: int) -> np.ndarray:
-    """Centered moving average; falls through unchanged when ``window <= 1``."""
+    """Centered moving average without zero-padding at the boundaries.
+
+    ``np.convolve(..., mode='same')`` pads with zeros, which biases the
+    first ``window/2`` and last ``window/2`` smoothed samples toward 0 and
+    creates a spurious dip at the right edge of the curve. Here we
+    compute the rolling mean from a cumulative sum and divide by the
+    actual number of samples inside each window, so boundary points are
+    just shorter averages of the data that *does* exist.
+    """
     if window <= 1 or x.size < window:
         return x
-    kernel = np.ones(window) / window
-    return np.convolve(x, kernel, mode='same')
+    half = window // 2
+    cumsum = np.concatenate(([0.0], np.cumsum(x, dtype=np.float64)))
+    out = np.empty_like(x, dtype=np.float64)
+    n = x.size
+    for i in range(n):
+        lo = max(0, i - half)
+        hi = min(n, i + half + 1)
+        out[i] = (cumsum[hi] - cumsum[lo]) / (hi - lo)
+    return out
 
 
 def plot(input_dir: Path, output_dir: Path, smooth: int = 25) -> None:
