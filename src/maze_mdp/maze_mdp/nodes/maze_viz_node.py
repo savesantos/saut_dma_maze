@@ -154,6 +154,21 @@ class MazeVizNode(Node):
         # Behaviour toggles.
         self.declare_parameter('publish_tf', True)
         self.declare_parameter('trail_max_poses', 1000)
+        # Source for the robot marker + trail:
+        #   'cell' -> snap to /robot_cell (discrete, good for tabular sim)
+        #   'odom' -> follow /virtual_odometry (continuous, good for the
+        #            realistic sim / hardware where the executor steers the
+        #            robot inside a cell)
+        self.declare_parameter('robot_source', 'cell')
+        # Floor rendering style:
+        #   'cells' -> walls as cubes + light-grey floor (default; matches
+        #              the discrete-MDP view of the maze).
+        #   'lines' -> white floor + black line segments between adjacent
+        #              passable cells (matches the physical maze paper that
+        #              the IR strip actually follows, and what
+        #              ``physics_sim_node`` senses internally).
+        self.declare_parameter('floor_style', 'cells')
+        self.declare_parameter('line_half_width_m', 0.012)
         # Re-publish the latched MarkerArrays at this rate (Hz). RViz Humble
         # frequently misses the initial TRANSIENT_LOCAL delivery for
         # MarkerArray displays; periodic republishing makes the maze appear
@@ -169,6 +184,13 @@ class MazeVizNode(Node):
         self._publish_tf = bool(gp('publish_tf').value)
         self._trail_max = int(gp('trail_max_poses').value)
         self._policy_path = gp('policy_path').get_parameter_value().string_value
+        self._robot_source = gp('robot_source').get_parameter_value().string_value
+        if self._robot_source not in ('cell', 'odom'):
+            self._robot_source = 'cell'
+        self._floor_style = gp('floor_style').get_parameter_value().string_value
+        if self._floor_style not in ('cells', 'lines'):
+            self._floor_style = 'cells'
+        self._line_half_width = float(gp('line_half_width_m').value)
 
         # Publishers.
         self._grid_pub = self.create_publisher(
@@ -309,6 +331,95 @@ class MazeVizNode(Node):
             self._heatmap_pub.publish(self._cached_heatmap)
 
     def _publish_walls(self, cells: np.ndarray) -> None:
+        """Dispatch wall rendering on ``floor_style`` ('cells' or 'lines')."""
+        if self._floor_style == 'lines':
+            self._publish_walls_lines(cells)
+            return
+        self._publish_walls_cubes(cells)
+
+    def _publish_walls_lines(self, cells: np.ndarray) -> None:
+        """White floor + black line segments between adjacent passable cells.
+
+        Matches the physical maze (black tape on white paper) and the
+        geometry that ``physics_sim_node`` senses internally.
+        """
+        rows, cols = cells.shape
+        arr = MarkerArray()
+        stamp = self.get_clock().now().to_msg()
+        marker_id = 0
+        # White floor plane covering the full maze.
+        floor = Marker()
+        floor.header.frame_id = self._frame
+        floor.header.stamp = stamp
+        floor.ns = 'walls'
+        floor.id = marker_id
+        marker_id += 1
+        floor.type = Marker.CUBE
+        floor.action = Marker.ADD
+        floor.pose.position.x = (cols - 1) * self._cell / 2.0
+        floor.pose.position.y = -(rows - 1) * self._cell / 2.0
+        floor.pose.position.z = -0.01
+        floor.pose.orientation.w = 1.0
+        floor.scale.x = cols * self._cell
+        floor.scale.y = rows * self._cell
+        floor.scale.z = 0.005
+        floor.color = ColorRGBA(r=0.98, g=0.98, b=0.98, a=1.0)
+        arr.markers.append(floor)
+        # Black line segments between every pair of adjacent passable cells,
+        # rendered as thin flat cubes at z=0 in the viz frame.
+        black = ColorRGBA(r=0.05, g=0.05, b=0.05, a=1.0)
+        thickness = max(2.0 * self._line_half_width, 0.005)
+        height = 0.002
+
+        def passable(r: int, c: int) -> bool:
+            return 0 <= r < rows and 0 <= c < cols \
+                and int(cells[r, c]) != _WALL
+
+        for r in range(rows):
+            for c in range(cols):
+                if not passable(r, c):
+                    continue
+                cx, cy = self._cell_xy(r, c)
+                if passable(r, c + 1):
+                    m = Marker()
+                    m.header.frame_id = self._frame
+                    m.header.stamp = stamp
+                    m.ns = 'walls'
+                    m.id = marker_id
+                    marker_id += 1
+                    m.type = Marker.CUBE
+                    m.action = Marker.ADD
+                    m.pose.position.x = cx + self._cell / 2.0
+                    m.pose.position.y = cy
+                    m.pose.position.z = 0.0
+                    m.pose.orientation.w = 1.0
+                    m.scale.x = self._cell
+                    m.scale.y = thickness
+                    m.scale.z = height
+                    m.color = black
+                    arr.markers.append(m)
+                if passable(r + 1, c):
+                    m = Marker()
+                    m.header.frame_id = self._frame
+                    m.header.stamp = stamp
+                    m.ns = 'walls'
+                    m.id = marker_id
+                    marker_id += 1
+                    m.type = Marker.CUBE
+                    m.action = Marker.ADD
+                    m.pose.position.x = cx
+                    m.pose.position.y = cy - self._cell / 2.0
+                    m.pose.position.z = 0.0
+                    m.pose.orientation.w = 1.0
+                    m.scale.x = thickness
+                    m.scale.y = self._cell
+                    m.scale.z = height
+                    m.color = black
+                    arr.markers.append(m)
+        self._cached_walls = arr
+        self._walls_pub.publish(arr)
+
+    def _publish_walls_cubes(self, cells: np.ndarray) -> None:
         """Walls + floor as a MarkerArray (avoids the OccupancyGrid shader bug).
 
         The ``rviz/glsl120/indexed_8bit_image`` shader fails to link on some
@@ -387,6 +498,8 @@ class MazeVizNode(Node):
 
     # --------------------------------------------------------------- runtime
     def _on_cell(self, msg: CellPose) -> None:
+        if self._robot_source != 'cell':
+            return
         r, c, h = int(msg.row), int(msg.col), int(msg.heading)
         x, y = self._cell_xy(r, c)
         yaw = _HEADING_YAW.get(h, 0.0)
@@ -395,6 +508,14 @@ class MazeVizNode(Node):
 
         # Robot "car": body cube + cabin cube + small front wedge so the
         # heading is unambiguous even when the camera is top-down.
+        self._publish_car(x, y, yaw, stamp)
+
+        # Append to the trail on every fresh cell transition.
+        if self._last_cell != (r, c):
+            self._last_cell = (r, c)
+            self._append_trail(x, y, stamp)
+
+    def _publish_car(self, x: float, y: float, yaw: float, stamp) -> None:
         body_color = ColorRGBA(r=0.10, g=0.40, b=1.00, a=1.0)
         cabin_color = ColorRGBA(r=0.05, g=0.20, b=0.55, a=1.0)
         front_color = ColorRGBA(r=1.00, g=0.95, b=0.30, a=1.0)
@@ -413,22 +534,40 @@ class MazeVizNode(Node):
         )
         self._robot_pub.publish(car)
 
-        # Append to the trail on every fresh cell transition.
-        if self._last_cell != (r, c):
-            self._last_cell = (r, c)
-            ps = PoseStamped()
-            ps.header.frame_id = self._frame
-            ps.header.stamp = stamp
-            ps.pose.position.x = x
-            ps.pose.position.y = y
-            ps.pose.orientation.w = 1.0
-            self._trail.poses.append(ps)
-            if len(self._trail.poses) > self._trail_max:
-                self._trail.poses = self._trail.poses[-self._trail_max:]
-            self._trail.header.stamp = stamp
-            self._trail_pub.publish(self._trail)
+    def _append_trail(self, x: float, y: float, stamp) -> None:
+        ps = PoseStamped()
+        ps.header.frame_id = self._frame
+        ps.header.stamp = stamp
+        ps.pose.position.x = x
+        ps.pose.position.y = y
+        ps.pose.orientation.w = 1.0
+        self._trail.poses.append(ps)
+        if len(self._trail.poses) > self._trail_max:
+            self._trail.poses = self._trail.poses[-self._trail_max:]
+        self._trail.header.stamp = stamp
+        self._trail_pub.publish(self._trail)
 
     def _on_odom(self, msg: Odometry) -> None:
+        # Drive the robot marker + trail directly from continuous odometry
+        # when configured (realistic sim / hardware path).
+        if self._robot_source == 'odom':
+            x = msg.pose.pose.position.x
+            y = msg.pose.pose.position.y
+            q = msg.pose.pose.orientation
+            # Yaw from quaternion (z-axis rotation).
+            yaw = math.atan2(
+                2.0 * (q.w * q.z + q.x * q.y),
+                1.0 - 2.0 * (q.y * q.y + q.z * q.z),
+            )
+            stamp = msg.header.stamp if msg.header.stamp.sec \
+                or msg.header.stamp.nanosec \
+                else self.get_clock().now().to_msg()
+            self._publish_car(x, y, yaw, stamp)
+            # Sub-sample the trail to ~5 cm steps so it stays light.
+            last = self._trail.poses[-1].pose.position if self._trail.poses else None
+            if last is None or math.hypot(x - last.x, y - last.y) > 0.02:
+                self._append_trail(x, y, stamp)
+
         if not self._publish_tf or self._tf is None:
             return
         # Re-broadcast the continuous pose as ``odom -> base_link``. The

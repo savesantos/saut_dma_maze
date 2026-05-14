@@ -13,7 +13,10 @@ find_package(std_msgs REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/MazeGrid.msg"
   "msg/CellPose.msg"
+  "msg/DiscreteActionGoal.msg"
+  "msg/DiscreteActionResult.msg"
   "srv/SetGoal.srv"
+  "srv/SetStartPose.srv"
   DEPENDENCIES std_msgs
 )
 
