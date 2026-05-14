@@ -77,3 +77,30 @@ Two complementary options were discussed:
 The companion archive `data/archive/reward10/` (next run)
 contains the same plots with `goal_reward = 10.0` for the
 side-by-side comparison in the report.
+
+## Reproducing
+
+Everything needed to re-run this scenario is pinned in the archive:
+
+- `sweep.yaml` — exact sweep configuration consumed by the trainer.
+- `training/<algo>/<maze>/<run_id>/` — `policy.npz`, `params.yaml`,
+  `metrics.csv`, `summary.json` for every (algo, maze, seed) triple,
+  plus `selected.json` identifying the policy picked by
+  `select_best_run` for downstream consumers.
+- `figures/` — PNG + PDF versions of all four canonical plots.
+
+To regenerate the figures from the archived policies (no retraining):
+
+```bash
+cd /home/salva/saut_dma_maze
+rm -rf data/training data/figures
+cp -a data/archive/reward0_baseline/training data/
+PYTHONPATH=src/maze_mdp bash scripts/make_all_figures.sh
+```
+
+To retrain end-to-end from the pinned sweep config:
+
+```bash
+cd /home/salva/saut_dma_maze
+bash scripts/rerun_archive.sh reward0_baseline
+```

@@ -51,3 +51,30 @@ three planners / learners on the *same* (new) MDP rather than tuning
 SARSA-only knobs to make it look better. The baseline archive
 documents the previous MDP and its artifact for the report's
 "reward shaping" discussion.
+
+## Reproducing
+
+Everything needed to re-run this scenario is pinned in the archive:
+
+- `sweep.yaml` — exact sweep configuration consumed by the trainer.
+- `training/<algo>/<maze>/<run_id>/` — `policy.npz`, `params.yaml`,
+  `metrics.csv`, `summary.json` for every (algo, maze, seed) triple,
+  plus `selected.json` identifying the policy picked by
+  `select_best_run` for downstream consumers.
+- `figures/` — PNG + PDF versions of all four canonical plots.
+
+To regenerate the figures from the archived policies (no retraining):
+
+```bash
+cd /home/salva/saut_dma_maze
+rm -rf data/training data/figures
+cp -a data/archive/reward10/training data/
+PYTHONPATH=src/maze_mdp bash scripts/make_all_figures.sh
+```
+
+To retrain end-to-end from the pinned sweep config:
+
+```bash
+cd /home/salva/saut_dma_maze
+bash scripts/rerun_archive.sh reward10
+```

@@ -26,7 +26,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from maze_mdp.analysis import style
-from maze_mdp.analysis.loaders import load_deployment_runs, load_training_runs
+from maze_mdp.analysis.loaders import (
+    load_deployment_runs,
+    load_training_runs,
+    mdp_config_from_runs,
+)
 from maze_mdp.policy import policy_value
 
 
@@ -44,23 +48,23 @@ def _valid_state_mask(mdp) -> np.ndarray:
     return valid
 
 
-def _build_mdp(maze_name: str):
+def _build_mdp(maze_name: str, mdp_config=None):
     from maze_mdp.mdp import MDP, MDPConfig
     from maze_mdp.simulator import FIXTURES
-    return MDP(FIXTURES[maze_name](), MDPConfig())
+    return MDP(FIXTURES[maze_name](), mdp_config or MDPConfig())
 
 
-def _vi_mean_value(maze_name: str) -> float:
+def _vi_mean_value(maze_name: str, mdp_config=None) -> float:
     """Mean V* averaged over reachable non-terminal states."""
     from maze_mdp.value_iteration import value_iteration
-    mdp = _build_mdp(maze_name)
+    mdp = _build_mdp(maze_name, mdp_config)
     _V, pi_star, _ = value_iteration(mdp)
     V_star = policy_value(mdp, pi_star)
     return float(V_star[_valid_state_mask(mdp)].mean())
 
 
-def _policy_mean_value(maze_name: str, pi) -> float:
-    mdp = _build_mdp(maze_name)
+def _policy_mean_value(maze_name: str, pi, mdp_config=None) -> float:
+    mdp = _build_mdp(maze_name, mdp_config)
     V = policy_value(mdp, pi)
     return float(V[_valid_state_mask(mdp)].mean())
 
@@ -74,6 +78,7 @@ def _empirical_success(
     pi,
     n_episodes: int = _EVAL_EPISODES,
     seed: int = _EVAL_SEED,
+    mdp_config=None,
 ) -> float:
     """Empirical success rate from random starts under the stochastic env.
 
@@ -87,7 +92,7 @@ def _empirical_success(
     """
     from maze_mdp.mdp import MDPConfig
     from maze_mdp.simulator import FIXTURES, GridMaze
-    env = GridMaze(FIXTURES[maze_name](), config=MDPConfig(), max_steps=500)
+    env = GridMaze(FIXTURES[maze_name](), config=mdp_config or MDPConfig(), max_steps=500)
     env.seed(seed)
     successes = 0
     for _ in range(n_episodes):
@@ -118,16 +123,17 @@ def plot(
             deploy_df = deploy_df[~deploy_df['maze'].isin(exclude_mazes)]
 
     mazes = sorted(train_df['maze'].unique())
-    vi_value: dict[str, float] = {m: _vi_mean_value(m) for m in mazes}
+    mdp_cfg = mdp_config_from_runs(input_dir / 'training')
+    vi_value: dict[str, float] = {m: _vi_mean_value(m, mdp_cfg) for m in mazes}
 
     rows = []
     for _, run in train_df.iterrows():
         pi = run['policy'].get('pi')
         if pi is None:
             continue
-        v_pi = _policy_mean_value(run['maze'], pi)
+        v_pi = _policy_mean_value(run['maze'], pi, mdp_cfg)
         gap = vi_value[run['maze']] - v_pi          # >= 0; VI ~ 0
-        success = _empirical_success(run['maze'], pi)
+        success = _empirical_success(run['maze'], pi, mdp_config=mdp_cfg)
         rows.append({
             'maze': run['maze'],
             'algo': run['algo'],

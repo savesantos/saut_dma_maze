@@ -30,6 +30,13 @@ class TDConfig:
     epsilon_min: float = 0.05
     epsilon_anneal_frac: float = 0.5
     gamma: float | None = None  # falls back to env.mdp.gamma
+    # Initial Q-table value strategy:
+    # - ``"pessimistic"`` -> ``-forward_cost / (1 - gamma)`` (default; removes
+    #   the optimistic-zero argmax tie-break that biased ε-greedy toward
+    #   under-visited actions at rarely-sampled states).
+    # - ``"zeros"`` -> ``0`` (historical behaviour, kept for archived
+    #   reproductions of pre-pessimistic-init experiments).
+    q_init: str = 'pessimistic'
 
 
 @dataclass
@@ -92,14 +99,19 @@ def td_control(
         env.seed(seed)
     rng = env.rng  # reuse env RNG for action sampling -> single seed per run
     gamma = cfg.gamma if cfg.gamma is not None else env.mdp.gamma
-    # Pessimistic Q init: lower-bound discounted return assuming the agent
-    # only ever pays the per-step forward cost. This removes the "unvisited
-    # entry has Q = 0 = optimistic argmax" tie-break that biased ε-greedy
-    # toward less-tried actions at rarely-visited (e.g. corner) states.
-    # Goal-absorbing terminals are never bootstrapped from (the loop uses
-    # ``bootstrap = 0.0`` on ``done``) so their Q row value is harmless.
-    q_init = -env.mdp.config.forward_cost / (1.0 - gamma)
-    Q = np.full((env.n_states, env.n_actions), q_init, dtype=np.float64)
+    # Q-table initial value. See ``TDConfig.q_init`` for rationale.
+    # ``pessimistic`` uses the lower-bound discounted return assuming the
+    # agent only ever pays the per-step forward cost; ``zeros`` is the
+    # historical optimistic init kept for archived reproductions.
+    if cfg.q_init == 'pessimistic':
+        q0 = -env.mdp.config.forward_cost / (1.0 - gamma)
+    elif cfg.q_init == 'zeros':
+        q0 = 0.0
+    else:
+        raise ValueError(
+            f"TDConfig.q_init must be 'pessimistic' or 'zeros', got {cfg.q_init!r}"
+        )
+    Q = np.full((env.n_states, env.n_actions), q0, dtype=np.float64)
     visit_counts = np.zeros_like(Q, dtype=np.int64)
     info = TDInfo(seed=seed)
     start = perf_counter()

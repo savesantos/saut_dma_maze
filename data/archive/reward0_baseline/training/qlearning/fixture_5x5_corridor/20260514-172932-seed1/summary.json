@@ -1,0 +1,10 @@
+{
+  "algo": "qlearning",
+  "maze": "fixture_5x5_corridor",
+  "seed": 1,
+  "run_id": "20260514-172932-seed1",
+  "run_dir": "data/training/qlearning/fixture_5x5_corridor/20260514-172932-seed1",
+  "episodes": 5000,
+  "final_return_mean_last50": -9.123999999999999,
+  "wall_clock_s": 4.077835266999955
+}

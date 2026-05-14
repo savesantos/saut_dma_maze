@@ -1,0 +1,36 @@
+# Archived scenario: reward10_7x7_tuned.
+# Reproduces `data/archive/reward10_7x7_tuned/` — same MDP and algorithms as
+# `reward10`, but with the 7x7 SARSA / Q-Learning budget extended and
+# epsilon decay slowed to test whether the SARSA gap on the largest maze
+# was under-training rather than a structural pathology.
+# - MDPConfig: goal_reward = 10.0.
+# - TDConfig:  q_init = zeros (algorithm-side unchanged).
+# - Budgets:   1k / 5k / 80k; epsilon_anneal_frac = 0.8 on 7x7 only.
+algos: [vi, sarsa, qlearning]
+mazes:
+  - fixture_3x3
+  - fixture_5x5_corridor
+  - fixture_7x7_loop
+seeds: [0, 1, 2, 3, 4]
+mdp_config:
+  gamma: 0.99
+  slip_prob: 0.1
+  goal_reward: 10.0
+td_config:
+  n_episodes: 2000
+  alpha0: 0.1
+  alpha_min: 0.001
+  alpha_tau: 50.0
+  epsilon0: 1.0
+  epsilon_min: 0.05
+  epsilon_anneal_frac: 0.5
+  q_init: zeros
+td_config_overrides:
+  fixture_3x3:
+    n_episodes: 1000
+  fixture_5x5_corridor:
+    n_episodes: 5000
+  fixture_7x7_loop:
+    n_episodes: 80000
+    epsilon_anneal_frac: 0.8
+out: data

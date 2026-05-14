@@ -1,0 +1,12 @@
+algo: vi
+maze: fixture_7x7_loop
+mdp_config:
+  bump_cost: 2.5
+  forward_cost: 1.0
+  gamma: 0.99
+  goal_reward: 10.0
+  slip_prob: 0.1
+  turn_cost: 1.2
+  turn_fail_prob: 0.0
+seed: 3
+vi_tol: 1.0e-06

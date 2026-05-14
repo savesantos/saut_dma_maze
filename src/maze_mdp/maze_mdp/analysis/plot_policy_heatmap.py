@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from maze_mdp.analysis import style
-from maze_mdp.analysis.loaders import load_training_runs
+from maze_mdp.analysis.loaders import load_training_runs, mdp_config_from_runs
 from maze_mdp.analysis.select_best_run import load_selected
 from maze_mdp.mdp import MDP, Action, Heading, MDPConfig
 from maze_mdp.policy import policy_value
@@ -40,9 +40,9 @@ _ACTION_COLOR = {
 }
 
 
-def _value_grid(maze_name: str, pi: np.ndarray) -> tuple[np.ndarray, MDP]:
+def _value_grid(maze_name: str, pi: np.ndarray, mdp_config=None) -> tuple[np.ndarray, MDP]:
     maze = FIXTURES[maze_name]()
-    mdp = MDP(maze, MDPConfig())
+    mdp = MDP(maze, mdp_config or MDPConfig())
     V = policy_value(mdp, pi)
     grid = np.full((maze.rows, maze.cols), np.nan)
     for r in range(maze.rows):
@@ -93,6 +93,7 @@ def plot(input_dir: Path, output_dir: Path) -> None:
         return group.sort_values('seed').iloc[0]
     df = df.groupby(['maze', 'algo'], group_keys=False).apply(_pick).reset_index(drop=True)
 
+    mdp_cfg = mdp_config_from_runs(input_dir / 'training')
     mazes = sorted(df['maze'].unique())
     algos = ['vi', 'sarsa', 'qlearning']
     fig, axes = plt.subplots(
@@ -110,7 +111,7 @@ def plot(input_dir: Path, output_dir: Path) -> None:
                 ax.axis('off')
                 continue
             pi = sub.iloc[0]['policy']['pi']
-            grid, mdp = _value_grid(maze, pi)
+            grid, mdp = _value_grid(maze, pi, mdp_cfg)
             im = ax.imshow(grid, cmap='viridis')
             goal = mdp.maze.goal
             for r in range(grid.shape[0]):

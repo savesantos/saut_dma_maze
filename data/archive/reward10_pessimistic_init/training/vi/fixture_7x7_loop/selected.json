@@ -1,0 +1,96 @@
+{
+  "algo": "vi",
+  "maze": "fixture_7x7_loop",
+  "selected": {
+    "run_id": "20260514-184552-seed0",
+    "run_dir": "data/training/vi/fixture_7x7_loop/20260514-184552-seed0",
+    "policy_path": "data/training/vi/fixture_7x7_loop/20260514-184552-seed0/policy.npz",
+    "seed": 0,
+    "eval": {
+      "mean_return": -7.5565,
+      "std_return": 10.768126937866214,
+      "mean_steps": 13.485,
+      "success_rate": 1.0,
+      "n_episodes": 200,
+      "eval_seed": 20260512,
+      "slip_prob": 0.1
+    }
+  },
+  "all": [
+    {
+      "run_id": "20260514-184552-seed0",
+      "run_dir": "data/training/vi/fixture_7x7_loop/20260514-184552-seed0",
+      "policy_path": "data/training/vi/fixture_7x7_loop/20260514-184552-seed0/policy.npz",
+      "seed": 0,
+      "eval": {
+        "mean_return": -7.5565,
+        "std_return": 10.768126937866214,
+        "mean_steps": 13.485,
+        "success_rate": 1.0,
+        "n_episodes": 200,
+        "eval_seed": 20260512,
+        "slip_prob": 0.1
+      }
+    },
+    {
+      "run_id": "20260514-184552-seed1",
+      "run_dir": "data/training/vi/fixture_7x7_loop/20260514-184552-seed1",
+      "policy_path": "data/training/vi/fixture_7x7_loop/20260514-184552-seed1/policy.npz",
+      "seed": 1,
+      "eval": {
+        "mean_return": -7.5565,
+        "std_return": 10.768126937866214,
+        "mean_steps": 13.485,
+        "success_rate": 1.0,
+        "n_episodes": 200,
+        "eval_seed": 20260512,
+        "slip_prob": 0.1
+      }
+    },
+    {
+      "run_id": "20260514-184552-seed2",
+      "run_dir": "data/training/vi/fixture_7x7_loop/20260514-184552-seed2",
+      "policy_path": "data/training/vi/fixture_7x7_loop/20260514-184552-seed2/policy.npz",
+      "seed": 2,
+      "eval": {
+        "mean_return": -7.5565,
+        "std_return": 10.768126937866214,
+        "mean_steps": 13.485,
+        "success_rate": 1.0,
+        "n_episodes": 200,
+        "eval_seed": 20260512,
+        "slip_prob": 0.1
+      }
+    },
+    {
+      "run_id": "20260514-184553-seed3",
+      "run_dir": "data/training/vi/fixture_7x7_loop/20260514-184553-seed3",
+      "policy_path": "data/training/vi/fixture_7x7_loop/20260514-184553-seed3/policy.npz",
+      "seed": 3,
+      "eval": {
+        "mean_return": -7.5565,
+        "std_return": 10.768126937866214,
+        "mean_steps": 13.485,
+        "success_rate": 1.0,
+        "n_episodes": 200,
+        "eval_seed": 20260512,
+        "slip_prob": 0.1
+      }
+    },
+    {
+      "run_id": "20260514-184553-seed4",
+      "run_dir": "data/training/vi/fixture_7x7_loop/20260514-184553-seed4",
+      "policy_path": "data/training/vi/fixture_7x7_loop/20260514-184553-seed4/policy.npz",
+      "seed": 4,
+      "eval": {
+        "mean_return": -7.5565,
+        "std_return": 10.768126937866214,
+        "mean_steps": 13.485,
+        "success_rate": 1.0,
+        "n_episodes": 200,
+        "eval_seed": 20260512,
+        "slip_prob": 0.1
+      }
+    }
+  ]
+}

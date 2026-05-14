@@ -1,0 +1,96 @@
+{
+  "algo": "qlearning",
+  "maze": "fixture_7x7_loop",
+  "selected": {
+    "run_id": "20260514-190701-seed3",
+    "run_dir": "data/training/qlearning/fixture_7x7_loop/20260514-190701-seed3",
+    "policy_path": "data/training/qlearning/fixture_7x7_loop/20260514-190701-seed3/policy.npz",
+    "seed": 3,
+    "eval": {
+      "mean_return": -147.0845000000005,
+      "std_return": 557.1345880572775,
+      "mean_steps": 129.11,
+      "success_rate": 0.94,
+      "n_episodes": 200,
+      "eval_seed": 20260512,
+      "slip_prob": 0.1
+    }
+  },
+  "all": [
+    {
+      "run_id": "20260514-190701-seed3",
+      "run_dir": "data/training/qlearning/fixture_7x7_loop/20260514-190701-seed3",
+      "policy_path": "data/training/qlearning/fixture_7x7_loop/20260514-190701-seed3/policy.npz",
+      "seed": 3,
+      "eval": {
+        "mean_return": -147.0845000000005,
+        "std_return": 557.1345880572775,
+        "mean_steps": 129.11,
+        "success_rate": 0.94,
+        "n_episodes": 200,
+        "eval_seed": 20260512,
+        "slip_prob": 0.1
+      }
+    },
+    {
+      "run_id": "20260514-190753-seed4",
+      "run_dir": "data/training/qlearning/fixture_7x7_loop/20260514-190753-seed4",
+      "policy_path": "data/training/qlearning/fixture_7x7_loop/20260514-190753-seed4/policy.npz",
+      "seed": 4,
+      "eval": {
+        "mean_return": -147.0845000000005,
+        "std_return": 557.1345880572775,
+        "mean_steps": 129.11,
+        "success_rate": 0.94,
+        "n_episodes": 200,
+        "eval_seed": 20260512,
+        "slip_prob": 0.1
+      }
+    },
+    {
+      "run_id": "20260514-190429-seed0",
+      "run_dir": "data/training/qlearning/fixture_7x7_loop/20260514-190429-seed0",
+      "policy_path": "data/training/qlearning/fixture_7x7_loop/20260514-190429-seed0/policy.npz",
+      "seed": 0,
+      "eval": {
+        "mean_return": -181.5150000000006,
+        "std_return": 618.1213065208178,
+        "mean_steps": 157.935,
+        "success_rate": 0.925,
+        "n_episodes": 200,
+        "eval_seed": 20260512,
+        "slip_prob": 0.1
+      }
+    },
+    {
+      "run_id": "20260514-190520-seed1",
+      "run_dir": "data/training/qlearning/fixture_7x7_loop/20260514-190520-seed1",
+      "policy_path": "data/training/qlearning/fixture_7x7_loop/20260514-190520-seed1/policy.npz",
+      "seed": 1,
+      "eval": {
+        "mean_return": -217.7035000000008,
+        "std_return": 671.2683907631531,
+        "mean_steps": 187.97,
+        "success_rate": 0.91,
+        "n_episodes": 200,
+        "eval_seed": 20260512,
+        "slip_prob": 0.1
+      }
+    },
+    {
+      "run_id": "20260514-190610-seed2",
+      "run_dir": "data/training/qlearning/fixture_7x7_loop/20260514-190610-seed2",
+      "policy_path": "data/training/qlearning/fixture_7x7_loop/20260514-190610-seed2/policy.npz",
+      "seed": 2,
+      "eval": {
+        "mean_return": -275.845500000001,
+        "std_return": 748.4806839055728,
+        "mean_steps": 235.95,
+        "success_rate": 0.885,
+        "n_episodes": 200,
+        "eval_seed": 20260512,
+        "slip_prob": 0.1
+      }
+    }
+  ]
+}

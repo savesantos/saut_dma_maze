@@ -1,0 +1,21 @@
+algo: qlearning
+maze: fixture_3x3
+mdp_config:
+  bump_cost: 2.5
+  forward_cost: 1.0
+  gamma: 0.99
+  goal_reward: 10.0
+  slip_prob: 0.1
+  turn_cost: 1.2
+  turn_fail_prob: 0.0
+seed: 1
+td_config:
+  alpha0: 0.1
+  alpha_min: 0.001
+  alpha_tau: 50.0
+  epsilon0: 1.0
+  epsilon_anneal_frac: 0.5
+  epsilon_min: 0.05
+  gamma: null
+  n_episodes: 1000
+  q_init: zeros

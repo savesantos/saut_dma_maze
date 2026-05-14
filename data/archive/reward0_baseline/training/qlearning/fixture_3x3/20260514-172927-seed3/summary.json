@@ -1,0 +1,10 @@
+{
+  "algo": "qlearning",
+  "maze": "fixture_3x3",
+  "seed": 3,
+  "run_id": "20260514-172927-seed3",
+  "run_dir": "data/training/qlearning/fixture_3x3/20260514-172927-seed3",
+  "episodes": 1000,
+  "final_return_mean_last50": -6.2799999999999985,
+  "wall_clock_s": 0.36959078799986855
+}

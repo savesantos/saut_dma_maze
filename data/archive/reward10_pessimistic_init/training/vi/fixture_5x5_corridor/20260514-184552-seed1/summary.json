@@ -1,0 +1,10 @@
+{
+  "algo": "vi",
+  "maze": "fixture_5x5_corridor",
+  "seed": 1,
+  "run_id": "20260514-184552-seed1",
+  "run_dir": "data/training/vi/fixture_5x5_corridor/20260514-184552-seed1",
+  "iterations": 44,
+  "converged": true,
+  "wall_clock_s": 0.0029443570001603803
+}

@@ -1,0 +1,33 @@
+# Archived scenario: reward10_pessimistic_init.
+# Reproduces `data/archive/reward10_pessimistic_init/` — algorithm-side fix
+# (pessimistic Q init) at the original 30k/0.5 schedule on 7x7.
+# - MDPConfig: goal_reward = 10.0.
+# - TDConfig:  q_init = pessimistic, epsilon_anneal_frac = 0.5 globally.
+# - Budgets:   1k / 5k / 30k episodes for the 3x3 / 5x5 / 7x7 mazes.
+algos: [vi, sarsa, qlearning]
+mazes:
+  - fixture_3x3
+  - fixture_5x5_corridor
+  - fixture_7x7_loop
+seeds: [0, 1, 2, 3, 4]
+mdp_config:
+  gamma: 0.99
+  slip_prob: 0.1
+  goal_reward: 10.0
+td_config:
+  n_episodes: 2000
+  alpha0: 0.1
+  alpha_min: 0.001
+  alpha_tau: 50.0
+  epsilon0: 1.0
+  epsilon_min: 0.05
+  epsilon_anneal_frac: 0.5
+  q_init: pessimistic
+td_config_overrides:
+  fixture_3x3:
+    n_episodes: 1000
+  fixture_5x5_corridor:
+    n_episodes: 5000
+  fixture_7x7_loop:
+    n_episodes: 30000
+out: data

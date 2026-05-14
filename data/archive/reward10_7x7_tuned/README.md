@@ -65,9 +65,27 @@ Visible in [policy_heatmap.png](policy_heatmap.png) and
 
 ## Reproducing
 
+Everything needed to re-run this scenario is pinned in the archive:
+
+- `sweep.yaml` — exact sweep configuration consumed by the trainer.
+- `training/<algo>/<maze>/<run_id>/` — `policy.npz`, `params.yaml`,
+  `metrics.csv`, `summary.json` for every (algo, maze, seed) triple,
+  plus `selected.json` identifying the policy picked by
+  `select_best_run` for downstream consumers.
+- `figures/` — PNG + PDF versions of all four canonical plots.
+
+To regenerate the figures from the archived policies (no retraining):
+
 ```bash
 cd /home/salva/saut_dma_maze
-PYTHONPATH=src/maze_mdp python3 -m maze_mdp.experiments.sweep \
-    --config src/maze_bringup/config/sweeps/default.yaml
+rm -rf data/training data/figures
+cp -a data/archive/reward10_7x7_tuned/training data/
 PYTHONPATH=src/maze_mdp bash scripts/make_all_figures.sh
+```
+
+To retrain end-to-end from the pinned sweep config:
+
+```bash
+cd /home/salva/saut_dma_maze
+bash scripts/rerun_archive.sh reward10_7x7_tuned
 ```

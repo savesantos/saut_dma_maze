@@ -1,0 +1,96 @@
+{
+  "algo": "sarsa",
+  "maze": "fixture_5x5_corridor",
+  "selected": {
+    "run_id": "20260514-172119-seed0",
+    "run_dir": "data/training/sarsa/fixture_5x5_corridor/20260514-172119-seed0",
+    "policy_path": "data/training/sarsa/fixture_5x5_corridor/20260514-172119-seed0/policy.npz",
+    "seed": 0,
+    "eval": {
+      "mean_return": -34.11050000000046,
+      "std_return": 166.9169905664221,
+      "mean_steps": 27.56,
+      "success_rate": 0.98,
+      "n_episodes": 200,
+      "eval_seed": 20260512,
+      "slip_prob": 0.1
+    }
+  },
+  "all": [
+    {
+      "run_id": "20260514-172119-seed0",
+      "run_dir": "data/training/sarsa/fixture_5x5_corridor/20260514-172119-seed0",
+      "policy_path": "data/training/sarsa/fixture_5x5_corridor/20260514-172119-seed0/policy.npz",
+      "seed": 0,
+      "eval": {
+        "mean_return": -34.11050000000046,
+        "std_return": 166.9169905664221,
+        "mean_steps": 27.56,
+        "success_rate": 0.98,
+        "n_episodes": 200,
+        "eval_seed": 20260512,
+        "slip_prob": 0.1
+      }
+    },
+    {
+      "run_id": "20260514-172133-seed3",
+      "run_dir": "data/training/sarsa/fixture_5x5_corridor/20260514-172133-seed3",
+      "policy_path": "data/training/sarsa/fixture_5x5_corridor/20260514-172133-seed3/policy.npz",
+      "seed": 3,
+      "eval": {
+        "mean_return": -50.09700000000079,
+        "std_return": 219.07270229538366,
+        "mean_steps": 41.725,
+        "success_rate": 0.965,
+        "n_episodes": 200,
+        "eval_seed": 20260512,
+        "slip_prob": 0.1
+      }
+    },
+    {
+      "run_id": "20260514-172129-seed2",
+      "run_dir": "data/training/sarsa/fixture_5x5_corridor/20260514-172129-seed2",
+      "policy_path": "data/training/sarsa/fixture_5x5_corridor/20260514-172129-seed2/policy.npz",
+      "seed": 2,
+      "eval": {
+        "mean_return": -115.03050000000204,
+        "std_return": 341.29399982969875,
+        "mean_steps": 95.88,
+        "success_rate": 0.91,
+        "n_episodes": 200,
+        "eval_seed": 20260512,
+        "slip_prob": 0.1
+      }
+    },
+    {
+      "run_id": "20260514-172138-seed4",
+      "run_dir": "data/training/sarsa/fixture_5x5_corridor/20260514-172138-seed4",
+      "policy_path": "data/training/sarsa/fixture_5x5_corridor/20260514-172138-seed4/policy.npz",
+      "seed": 4,
+      "eval": {
+        "mean_return": -121.75750000000215,
+        "std_return": 349.40106316918184,
+        "mean_steps": 101.325,
+        "success_rate": 0.905,
+        "n_episodes": 200,
+        "eval_seed": 20260512,
+        "slip_prob": 0.1
+      }
+    },
+    {
+      "run_id": "20260514-172124-seed1",
+      "run_dir": "data/training/sarsa/fixture_5x5_corridor/20260514-172124-seed1",
+      "policy_path": "data/training/sarsa/fixture_5x5_corridor/20260514-172124-seed1/policy.npz",
+      "seed": 1,
+      "eval": {
+        "mean_return": -162.99400000000293,
+        "std_return": 400.9446033606215,
+        "mean_steps": 135.8,
+        "success_rate": 0.87,
+        "n_episodes": 200,
+        "eval_seed": 20260512,
+        "slip_prob": 0.1
+      }
+    }
+  ]
+}

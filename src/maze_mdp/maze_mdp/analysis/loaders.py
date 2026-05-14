@@ -59,4 +59,30 @@ def load_deployment_runs(root: Path | str = 'data/deployment') -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-__all__ = ['load_training_runs', 'load_deployment_runs']
+def mdp_config_from_runs(training_root: Path | str = 'data/training'):
+    """Build an :class:`MDPConfig` from the first run's ``params.yaml``.
+
+    Every run inside a single sweep shares the same MDP, so any
+    ``params.yaml`` is authoritative. Falls back to default
+    :class:`MDPConfig` when no run is found.
+    """
+    from maze_mdp.mdp import MDPConfig  # local import to keep loaders light
+    root = Path(training_root)
+    for params_path in sorted(root.rglob('params.yaml')):
+        data = yaml.safe_load(params_path.read_text()) or {}
+        mdp_cfg = data.get('mdp_config') or {}
+        # Only forward keys that MDPConfig actually accepts.
+        accepted = {
+            'slip_prob', 'turn_fail_prob', 'forward_cost', 'turn_cost',
+            'bump_cost', 'goal_reward', 'gamma',
+        }
+        filtered = {k: v for k, v in mdp_cfg.items() if k in accepted}
+        return MDPConfig(**filtered)
+    return MDPConfig()
+
+
+__all__ = [
+    'load_training_runs',
+    'load_deployment_runs',
+    'mdp_config_from_runs',
+]

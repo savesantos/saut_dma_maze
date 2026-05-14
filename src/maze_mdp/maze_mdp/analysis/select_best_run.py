@@ -42,6 +42,27 @@ def _policy_pi(bundle: dict) -> np.ndarray:
     raise RuntimeError('Bundle has neither pi nor Q.')
 
 
+def _mdp_config_from_params(params_path: Path) -> 'MDPConfig':
+    """Build an :class:`MDPConfig` from a run's ``params.yaml``.
+
+    Each archived scenario uses a different MDP (e.g. ``goal_reward``),
+    so evaluation must mirror the training MDP for the reported
+    ``mean_return`` to make sense across scenarios. ``success_rate`` is
+    invariant under reward scaling, but the printed ranking keeps using
+    return, so we keep this consistent.
+    """
+    from maze_mdp.mdp import MDPConfig
+    if not params_path.exists():
+        return MDPConfig()
+    data = yaml.safe_load(params_path.read_text()) or {}
+    mdp_cfg = data.get('mdp_config') or {}
+    accepted = {
+        'slip_prob', 'turn_fail_prob', 'forward_cost', 'turn_cost',
+        'bump_cost', 'goal_reward', 'gamma',
+    }
+    return MDPConfig(**{k: v for k, v in mdp_cfg.items() if k in accepted})
+
+
 def _slip_from_params(params_path: Path, fallback: float) -> float:
     if not params_path.exists():
         return fallback
@@ -56,14 +77,16 @@ def evaluate_policy(
     eval_seed: int = _DEFAULT_EVAL_SEED,
     n_episodes: int = _DEFAULT_EVAL_EPISODES,
     slip_prob: float = 0.1,
+    mdp_config: 'MDPConfig | None' = None,
 ) -> dict:
     """Roll out ``pi`` for ``n_episodes`` and return aggregate metrics."""
     if maze_name not in FIXTURES:
         raise KeyError(f'Unknown maze fixture: {maze_name!r}')
     maze = FIXTURES[maze_name]()
+    config = mdp_config if mdp_config is not None else MDPConfig(slip_prob=slip_prob)
     env = GridMaze(
         maze=maze,
-        config=MDPConfig(slip_prob=slip_prob),
+        config=config,
         rng=np.random.default_rng(eval_seed),
     )
     returns = np.empty(n_episodes, dtype=np.float64)
@@ -88,7 +111,7 @@ def evaluate_policy(
         'success_rate': float(successes.mean()),
         'n_episodes': int(n_episodes),
         'eval_seed': int(eval_seed),
-        'slip_prob': float(slip_prob),
+        'slip_prob': float(config.slip_prob),
     }
 
 
@@ -116,13 +139,16 @@ def select_best_for(
             continue
         bundle = load_policy(policy_path)
         pi = _policy_pi(bundle)
-        slip = _slip_from_params(run_dir / 'params.yaml', fallback=0.1)
+        params_path = run_dir / 'params.yaml'
+        slip = _slip_from_params(params_path, fallback=0.1)
+        mdp_cfg = _mdp_config_from_params(params_path)
         metrics = evaluate_policy(
             pi,
             maze_name,
             eval_seed=eval_seed,
             n_episodes=n_episodes,
             slip_prob=slip,
+            mdp_config=mdp_cfg,
         )
         summary_path = run_dir / 'summary.json'
         summary = json.loads(summary_path.read_text()) if summary_path.exists() else {}

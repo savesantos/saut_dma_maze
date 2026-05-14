@@ -1,0 +1,10 @@
+{
+  "algo": "sarsa",
+  "maze": "fixture_5x5_corridor",
+  "seed": 3,
+  "run_id": "20260514-172133-seed3",
+  "run_dir": "data/training/sarsa/fixture_5x5_corridor/20260514-172133-seed3",
+  "episodes": 5000,
+  "final_return_mean_last50": -11.510000000000002,
+  "wall_clock_s": 4.9665762400001086
+}
