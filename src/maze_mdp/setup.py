@@ -36,6 +36,7 @@ setup(
             'policy_runner = maze_mdp.nodes.policy_runner:main',
             'action_executor = maze_mdp.nodes.action_executor:main',
             'ir_driver_sim = maze_mdp.nodes.ir_driver_sim:main',
+            'ir_driver_gazebo = maze_mdp.nodes.ir_driver_gazebo:main',
             'cell_tracker = maze_mdp.nodes.cell_tracker:main',
             'maze_sim_node = maze_mdp.nodes.maze_sim_node:main',
             'maze_viz_node = maze_mdp.nodes.maze_viz_node:main',

@@ -19,7 +19,7 @@ ROS 2 Humble (Python 3.10, Ubuntu 22.04) colcon workspace implementing MDP-based
 🚫 Never:
 - Import `rclpy` or any ROS package from algorithm modules (`mdp.py`, `simulator.py`, `value_iteration.py`, `sarsa.py`, `qlearning.py`). They must stay runnable with plain `python3` so the micro-simulator has zero ROS coupling. Put ROS code under `maze_mdp/nodes/` only.
 - Put any logic in `maze_bringup`. It contains launch files and YAML configs only — no Python nodes, no algorithms.
-- Assume the AlphaBot2 has wheel odometry, IMU, or LiDAR. It does **not**. Only the camera (`/image/compressed`, `sensor_msgs/CompressedImage`) and `/virtual_odometry` (`nav_msgs/Odometry`) are available; cmd topic is `/alphabot2/cmd_vel` (namespaced, **not** `/cmd_vel`).
+- Assume the AlphaBot2 has wheel odometry, IMU, or LiDAR. It does **not**. Available sensors are the camera (`/image/compressed`, `sensor_msgs/CompressedImage`) and a 5-channel downward IR reflectance array (Waveshare TRSensors) exposed as `/line_sensors` (`std_msgs/Int16MultiArray`). `/virtual_odometry` (`nav_msgs/Odometry`) is published by the diff-drive plugin in sim and is **not** available on hardware. Cmd topic is `/alphabot2/cmd_vel` (namespaced, **not** `/cmd_vel`).
 - Commit `build/`, `install/`, `log/`, or `*.egg-info/` (already in `.gitignore`).
 - Skip `--symlink-install` on `colcon build` — losing it breaks the inner dev loop.
 - Hardcode `ROS_DOMAIN_ID`; it must be set per shell from the AlphaBot's IP last octet (50–70).
@@ -105,8 +105,9 @@ Other rules:
 ## AlphaBot2 Integration Notes
 
 - Subscribes: `/alphabot2/cmd_vel` (`geometry_msgs/Twist`).
-- Publishes: `/image/compressed` (`sensor_msgs/CompressedImage`), `/virtual_odometry` (`nav_msgs/Odometry`).
-- Goal identification + cell-level localization is via **fiducial markers** (ArUco / AprilTag) on the camera stream — there is no laser scan to fall back on.
+- Publishes: `/image/compressed` (`sensor_msgs/CompressedImage`), `/line_sensors` (`std_msgs/Int16MultiArray`, 5-channel TRSensors IR array), and (sim only) `/virtual_odometry` (`nav_msgs/Odometry`).
+- **IR array (Waveshare TRSensors, 5 downward reflectance channels)** is the primary sensor for line following and intersection detection — black lines on a white floor, high raw value = on line. Reference hardware code: `TRSensors (1).py`, `Line_Follow (1).py` at repo root (provided by course staff). A separate `line_pose_estimator` node converts raw `/line_sensors` to `/line_pose`, `/intersection`, `/line_lost` so the action executor has the same interface in sim and on hardware.
+- Goal identification + cell-level localization is via **fiducial markers** (ArUco / AprilTag) on the camera stream — there is no laser scan to fall back on. The camera is also the fallback for line recovery if the IR array loses the line.
 - **Localization & mapping scope (professor, 2026-05):** any ROS 2 method is acceptable (fiducial markers, `robot_localization`, `slam_toolbox`, `nav2` AMCL, etc.). It is not a graded contribution of this project — pick whatever yields a reliable discrete cell estimate for the MDP and move on. Do not over-invest engineering effort here.
 - Bring-up on hardware (per `Lab_guide_2526.pdf`): SSH `deec@10.16.140.<id>`, then `ros2 launch alphabot2 alphabot2_launch.py` and in another SSH `ros2 run alphabot2 motion_driver`. On the laptop set `ROS_DOMAIN_ID=<id>` before `ros2 topic list`.
 

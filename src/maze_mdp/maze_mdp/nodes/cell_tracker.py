@@ -79,6 +79,10 @@ class CellTrackerNode(Node):
         self.get_logger().info(
             f'cell_tracker started at {start} on {rows}x{cols} grid')
         self._publish()
+        # TRANSIENT_LOCAL latching is sometimes missed by late-joining
+        # subscribers under DDS discovery races. Republish at a low rate
+        # so policy_runner reliably picks up the initial pose.
+        self._heartbeat = self.create_timer(1.0, self._publish)
 
     def _on_goal(self, msg: DiscreteActionGoal) -> None:
         self._pending[int(msg.goal_id)] = int(msg.action)

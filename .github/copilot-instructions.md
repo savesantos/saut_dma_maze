@@ -16,11 +16,16 @@ See [AGENTS.md](../AGENTS.md) for full operational rules. The points below are t
 
 ## AlphaBot2 facts (do not infer otherwise)
 
-- No wheel odometry, no IMU, no LiDAR. **Camera + fiducial markers (ArUco / AprilTag) only.**
+- No wheel odometry, no IMU, no LiDAR. Two onboard exteroceptive sensors: **(a) camera** and **(b) a 5-channel reflectance IR array (Waveshare TRSensors, downward, under the chassis).**
+- **Sensor roles (best practice):**
+  - IR array → low-latency line following + intersection detection. Wrapped by `ir_driver` (hardware) / Gazebo ray plugin (sim) publishing `/line_sensors` (`std_msgs/Int16MultiArray`, 5 raw values, high = on black line on white background). A ROS-free estimator converts that to `/line_pose` (`std_msgs/Float32`, −1..+1), `/intersection` (`std_msgs/Empty`), `/line_lost` (`std_msgs/Empty`).
+  - Camera → ArUco/AprilTag fiducial detection for the goal marker, optional cell-level localization. Publishes `/image/compressed`.
+  - Both feed `action_executor`; line-following uses IR, final approach / goal recognition uses the camera.
 - **Localization & mapping:** any ROS 2 method is allowed (per professor, 2026-05) — fiducials, `robot_localization`, `slam_toolbox`, `nav2` AMCL, etc. It is not the project's contribution; the MDP only needs a discrete cell estimate.
 - Subscribes: `/alphabot2/cmd_vel` (`geometry_msgs/Twist`) — namespaced, **not** `/cmd_vel`.
-- Publishes: `/image/compressed` (`sensor_msgs/CompressedImage`), `/virtual_odometry` (`nav_msgs/Odometry`).
+- Publishes: `/image/compressed` (`sensor_msgs/CompressedImage`), `/virtual_odometry` (`nav_msgs/Odometry`), `/line_sensors` (`std_msgs/Int16MultiArray`).
 - `ROS_DOMAIN_ID` is set per shell from the robot IP last octet (50–70). Never hardcode it.
+- Reference hardware drivers (provided by course staff, copies at repo root): `TRSensors (1).py` (5-channel IR read + calibration + `readLine()`), `Line_Follow (1).py` (PID line-follow demo). Treat them as the API contract for the hardware `ir_driver` node.
 
 ## Build / test workflow
 

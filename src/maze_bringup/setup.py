@@ -27,6 +27,8 @@ setup(
             glob('config/sweeps/*.yaml')),
         (os.path.join('share', package_name, 'config', 'rviz'),
             glob('config/rviz/*.rviz')),
+        (os.path.join('share', package_name, 'urdf'),
+            glob('urdf/*.sdf')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,

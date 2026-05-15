@@ -1,0 +1,229 @@
+<?xml version="1.0"?>
+<!--
+  Minimal Waveshare AlphaBot2 model for Gazebo Classic + ROS 2 Humble.
+  Differential drive (libgazebo_ros_diff_drive) + forward camera
+  (libgazebo_ros_camera). Real AlphaBot2 dimensions (mm precision):
+    - chassis cylinder: 110 mm dia, 30 mm tall
+    - wheels:           42 mm dia, 17 mm wide, 92 mm track width
+    - 2 casters (front + back) for stability
+
+  Topics:
+    sub:  /alphabot2/cmd_vel   (geometry_msgs/Twist)
+    pub:  /virtual_odometry    (nav_msgs/Odometry)
+    pub:  /image/raw           (sensor_msgs/Image)
+    pub:  /image/compressed    (sensor_msgs/CompressedImage, via image_transport)
+    pub:  /image/camera_info   (sensor_msgs/CameraInfo)
+-->
+<robot name="alphabot2">
+
+  <!-- ============================== chassis ============================== -->
+  <link name="base_link">
+    <inertial>
+      <mass value="0.145"/>
+      <origin xyz="0 0 0"/>
+      <inertia ixx="0.000131" ixy="0" ixz="0"
+               iyy="0.000131" iyz="0" izz="0.000219"/>
+    </inertial>
+    <collision>
+      <geometry><cylinder radius="0.055" length="0.030"/></geometry>
+    </collision>
+    <visual>
+      <geometry><cylinder radius="0.055" length="0.030"/></geometry>
+      <material name="blue"><color rgba="0.20 0.24 0.29 1.0"/></material>
+    </visual>
+  </link>
+
+  <!-- ============================== wheels =============================== -->
+  <link name="left_wheel_link">
+    <inertial>
+      <mass value="0.045"/>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+      <inertia ixx="1.05e-5" ixy="0" ixz="0"
+               iyy="1.05e-5" iyz="0" izz="1.99e-5"/>
+    </inertial>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+      <geometry><cylinder radius="0.021" length="0.017"/></geometry>
+      <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface>
+    </collision>
+    <visual>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+      <geometry><cylinder radius="0.021" length="0.017"/></geometry>
+      <material name="black"><color rgba="0.05 0.05 0.05 1.0"/></material>
+    </visual>
+  </link>
+  <joint name="left_wheel_joint" type="continuous">
+    <parent link="base_link"/>
+    <child link="left_wheel_link"/>
+    <origin xyz="0 0.046 -0.005"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+
+  <link name="right_wheel_link">
+    <inertial>
+      <mass value="0.045"/>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+      <inertia ixx="1.05e-5" ixy="0" ixz="0"
+               iyy="1.05e-5" iyz="0" izz="1.99e-5"/>
+    </inertial>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+      <geometry><cylinder radius="0.021" length="0.017"/></geometry>
+      <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface>
+    </collision>
+    <visual>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+      <geometry><cylinder radius="0.021" length="0.017"/></geometry>
+      <material name="black"><color rgba="0.05 0.05 0.05 1.0"/></material>
+    </visual>
+  </link>
+  <joint name="right_wheel_joint" type="continuous">
+    <parent link="base_link"/>
+    <child link="right_wheel_link"/>
+    <origin xyz="0 -0.046 -0.005"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+
+  <!-- ============================== casters ============================== -->
+  <link name="caster_front_link">
+    <inertial>
+      <mass value="0.005"/><origin xyz="0 0 0"/>
+      <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6"/>
+    </inertial>
+    <collision>
+      <geometry><sphere radius="0.005"/></geometry>
+      <surface><friction><ode>
+        <mu>0.0</mu><mu2>0.0</mu2><slip1>1.0</slip1><slip2>1.0</slip2>
+      </ode></friction></surface>
+    </collision>
+    <visual>
+      <geometry><sphere radius="0.005"/></geometry>
+      <material name="white"><color rgba="0.9 0.9 0.9 1.0"/></material>
+    </visual>
+  </link>
+  <joint name="caster_front_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="caster_front_link"/>
+    <origin xyz="0.045 0 -0.021"/>
+  </joint>
+
+  <link name="caster_back_link">
+    <inertial>
+      <mass value="0.005"/><origin xyz="0 0 0"/>
+      <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6"/>
+    </inertial>
+    <collision>
+      <geometry><sphere radius="0.005"/></geometry>
+      <surface><friction><ode>
+        <mu>0.0</mu><mu2>0.0</mu2><slip1>1.0</slip1><slip2>1.0</slip2>
+      </ode></friction></surface>
+    </collision>
+    <visual>
+      <geometry><sphere radius="0.005"/></geometry>
+      <material name="white"><color rgba="0.9 0.9 0.9 1.0"/></material>
+    </visual>
+  </link>
+  <joint name="caster_back_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="caster_back_link"/>
+    <origin xyz="-0.045 0 -0.021"/>
+  </joint>
+
+  <!-- ============================== camera =============================== -->
+  <!-- Forward-facing Pi-camera-like sensor, slightly above the chassis. -->
+  <link name="camera_link">
+    <inertial>
+      <mass value="0.020"/>
+      <origin xyz="0 0 0"/>
+      <inertia ixx="6e-6" ixy="0" ixz="0" iyy="6e-6" iyz="0" izz="5e-6"/>
+    </inertial>
+    <collision>
+      <geometry><box size="0.020 0.025 0.025"/></geometry>
+    </collision>
+    <visual>
+      <geometry><box size="0.020 0.025 0.025"/></geometry>
+      <material name="grey"><color rgba="0.3 0.3 0.3 1.0"/></material>
+    </visual>
+  </link>
+  <joint name="camera_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="camera_link"/>
+    <!-- 4 cm in front of the chassis centre, 6 cm above the wheel axle. -->
+    <origin xyz="0.040 0 0.060" rpy="0 0.10 0"/>
+  </joint>
+
+  <!-- REP-103 optical frame: z forward, x right, y down. -->
+  <link name="camera_link_optical"/>
+  <joint name="camera_optical_joint" type="fixed">
+    <parent link="camera_link"/>
+    <child link="camera_link_optical"/>
+    <origin xyz="0 0 0" rpy="-1.5708 0 -1.5708"/>
+  </joint>
+
+  <!-- ============================ Gazebo block =========================== -->
+  <gazebo reference="base_link"><material>Gazebo/Blue</material></gazebo>
+  <gazebo reference="left_wheel_link"><material>Gazebo/Black</material></gazebo>
+  <gazebo reference="right_wheel_link"><material>Gazebo/Black</material></gazebo>
+  <gazebo reference="caster_front_link"><material>Gazebo/White</material></gazebo>
+  <gazebo reference="caster_back_link"><material>Gazebo/White</material></gazebo>
+  <gazebo reference="camera_link"><material>Gazebo/Grey</material></gazebo>
+
+  <!-- Differential drive plugin. Note the namespace: cmd_vel resolves to
+       /alphabot2/cmd_vel exactly like the real robot. -->
+  <gazebo>
+    <plugin name="diff_drive" filename="libgazebo_ros_diff_drive.so">
+      <ros>
+        <namespace>/alphabot2</namespace>
+        <remapping>cmd_vel:=cmd_vel</remapping>
+        <remapping>odom:=/virtual_odometry</remapping>
+      </ros>
+      <update_rate>30.0</update_rate>
+      <left_joint>left_wheel_joint</left_joint>
+      <right_joint>right_wheel_joint</right_joint>
+      <wheel_separation>0.092</wheel_separation>
+      <wheel_diameter>0.042</wheel_diameter>
+      <max_wheel_torque>0.5</max_wheel_torque>
+      <max_wheel_acceleration>2.0</max_wheel_acceleration>
+      <publish_odom>true</publish_odom>
+      <publish_odom_tf>true</publish_odom_tf>
+      <publish_wheel_tf>false</publish_wheel_tf>
+      <odometry_frame>odom</odometry_frame>
+      <robot_base_frame>base_link</robot_base_frame>
+    </plugin>
+  </gazebo>
+
+  <!-- Camera sensor + plugin. /image/raw + /image/compressed via image_transport. -->
+  <gazebo reference="camera_link">
+    <sensor type="camera" name="alphabot2_camera">
+      <update_rate>30.0</update_rate>
+      <visualize>true</visualize>
+      <camera name="alphabot2_camera">
+        <horizontal_fov>1.0856</horizontal_fov>
+        <image>
+          <width>320</width>
+          <height>240</height>
+          <format>R8G8B8</format>
+        </image>
+        <clip>
+          <near>0.02</near>
+          <far>20.0</far>
+        </clip>
+        <noise>
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.005</stddev>
+        </noise>
+      </camera>
+      <plugin name="camera_controller" filename="libgazebo_ros_camera.so">
+        <ros>
+          <namespace>/</namespace>
+          <remapping>~/image_raw:=/image/raw</remapping>
+          <remapping>~/camera_info:=/image/camera_info</remapping>
+        </ros>
+        <camera_name>alphabot2_camera</camera_name>
+        <frame_name>camera_link_optical</frame_name>
+      </plugin>
+    </sensor>
+  </gazebo>
+
+</robot>

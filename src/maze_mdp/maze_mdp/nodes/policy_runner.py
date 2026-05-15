@@ -216,6 +216,10 @@ class PolicyRunner(Node):
             return
         assert (self._cell is not None and self._n_cols is not None
                 and self._goal is not None and self._goal_pub is not None)
+        # Avoid the DDS discovery race: if no executor has matched our
+        # goal publisher yet, defer; _tick() will retry next period.
+        if self._goal_pub.get_subscription_count() == 0:
+            return
         r, c, h = self._cell
         if (r, c) == self._goal:
             self._transition(_State.DONE)
