@@ -170,20 +170,32 @@ class IRDriverGazebo(Node):
         # 1) line_pose / line_lost
         pose_val = estimate_line_pose(rx, ry, yaw, self._segments, self._cfg)
         # When the robot is rotating in place at an intersection (cell
-        # centre), the analytic geometry yields pose ~= 0 throughout the
-        # turn, so the executor never sees the excursion that signals
-        # turn completion. Inject a synthetic excursion based on the
-        # angular deviation from the nearest cardinal heading: as the
-        # robot rotates 90 deg, sin(2*delta) sweeps 0 -> ~+/-1 -> 0,
-        # giving the executor a clean spike-then-zero waveform.
-        if abs(self._yaw_rate) > 0.2:
+        # centre), the analytic geometry returns ``None`` once the heading
+        # leaves the parallel-tolerance window of every adjacent segment.
+        # Fill in a synthetic excursion derived from the angular deviation
+        # from the nearest cardinal heading so the executor's TURNING state
+        # still sees something monotonic during the spin. As the robot
+        # rotates 90 deg, sin(2*delta) sweeps 0 -> ~+/-1 -> 0, giving a
+        # clean spike-then-zero waveform.
+        #
+        # CRITICAL: only inject this when ``pose_val`` is *already* ``None``
+        # (i.e. the robot is genuinely off all parallel segments, which
+        # only happens at intersection centres mid-spin). Earlier versions
+        # also overrode small but valid ``pose_val`` whenever the executor
+        # was steering fast enough to push ``|yaw_rate|`` past a low
+        # threshold; that inverted the line-pose feedback during normal
+        # line-following corrections (the spike points opposite to the
+        # correction direction), causing the robot to walk off the line on
+        # long straights. The hardware ir_driver has no equivalent of this
+        # injection, so gating it on ``pose_val is None`` also brings the
+        # two drivers' behaviour closer.
+        if pose_val is None and abs(self._yaw_rate) > 0.4:
             delta = _delta_to_cardinal(yaw)
             spike = math.sin(2.0 * delta)
             # Sign aligned with the actual turn direction so the executor's
             # TURNING state sees a consistent waveform.
             spike = math.copysign(abs(spike), -self._yaw_rate)
-            if pose_val is None or abs(spike) > abs(pose_val):
-                pose_val = max(-1.0, min(1.0, spike))
+            pose_val = max(-1.0, min(1.0, spike))
         if pose_val is None:
             self._pose_pub.publish(Float32(data=float('nan')))
             if self._lost_since is None:

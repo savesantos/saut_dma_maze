@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
+from maze_mdp.control.line_pid import LinePID, LinePIDConfig
 from maze_mdp.mdp import Action
 
 
@@ -89,7 +90,20 @@ class ExecutorConfig:
 
     forward_speed: float = 0.10       # m/s along the line
     turn_speed: float = 0.60          # rad/s for in-place rotation (fast)
-    line_p_gain: float = 0.8          # rad/s per unit line_pose error
+    # ---- Line-follow PID ----
+    # ``line_p_gain`` is the proportional gain ``Kp`` (kept for backward
+    # compatibility with launch files that only tune it). ``line_i_gain``
+    # / ``line_d_gain`` default to 0 so the legacy P-only behaviour is
+    # reproduced exactly when callers do not override them.
+    line_p_gain: float = 0.8          # Kp, rad/s per unit line_pose error
+    line_i_gain: float = 0.0          # Ki, rad/s per (pose * s)
+    line_d_gain: float = 0.0          # Kd, rad/s per (pose / s)
+    # First-order low-pass on the derivative term (seconds). Required on
+    # hardware where the IR strip is noisy; ``0.0`` disables the filter.
+    line_d_filter_tau: float = 0.05
+    # Symmetric clamp on the integrator state and on the controller output.
+    line_i_clamp: float = 0.5
+    line_omega_clamp: float = 2.5     # rad/s
     action_timeout_s: float = 8.0     # global per-action timeout
     line_lost_timeout_s: float = 0.5  # forward fail after this with no line
     approach_speed: float = 0.08      # m/s while creeping toward the marker
@@ -139,13 +153,29 @@ class ActionExecutor:
         self._t_since_start: float = 0.0
         self._t_since_line: float = 0.0
         self._t_crossing: float = 0.0
+        self._t_last_pose: float = 0.0  # for PID dt
         self._result: Optional[ActionResult] = None
+        # Line-follow PID (shared between DRIVING and APPROACHING).
+        self._line_pid = LinePID(LinePIDConfig(
+            kp=self._cfg.line_p_gain,
+            ki=self._cfg.line_i_gain,
+            kd=self._cfg.line_d_gain,
+            d_filter_tau=self._cfg.line_d_filter_tau,
+            i_clamp=self._cfg.line_i_clamp,
+            output_clamp=self._cfg.line_omega_clamp,
+        ))
         # Turn-specific bookkeeping.
         self._turn_phase: _TurnPhase = _TurnPhase.LEAVE
         self._turn_direction: int = 0  # -1 left (CCW), +1 right (CW)
         self._yaw_accum: float = 0.0   # |integrated commanded omega|
         self._lock_streak: int = 0
         self._leave_seen: bool = False  # safety: only LOCK after LEAVE
+        # Most recent angular command emitted by the line-follow PID. Held
+        # across brief NaN samples so a transient line drop-out does not
+        # zero the correction in progress (the robot was already steering
+        # toward the line; keep doing that until the line returns or the
+        # action fails on line_lost_timeout).
+        self._last_line_omega: float = 0.0
 
     # ----------------------------------------------------------- public API
     @property
@@ -173,9 +203,12 @@ class ActionExecutor:
         self._t_since_start = 0.0
         self._t_since_line = 0.0
         self._t_crossing = 0.0
+        self._t_last_pose = 0.0
+        self._line_pid.reset()
         self._yaw_accum = 0.0
         self._lock_streak = 0
         self._leave_seen = False
+        self._last_line_omega = 0.0
         if self._action == int(Action.FORWARD):
             self._state = _State.DRIVING
             return MotorCmd(self._cfg.forward_speed, 0.0)
@@ -209,10 +242,20 @@ class ActionExecutor:
         The driver should publish NaN when no line is visible.
         """
         if self._state == _State.DRIVING:
-            self._t_since_line = 0.0
+            # NaN means the IR strip currently sees no line. Do NOT zero
+            # the angular command: the robot was almost certainly steering
+            # toward the line, and zeroing here would let it coast off
+            # tangent until line_lost_timeout fires. Instead hold the most
+            # recent PID output -- the controller keeps pulling back the
+            # same direction it was last correcting in. ``_t_since_line``
+            # is intentionally not reset here so the line_lost grace
+            # timeout still arms.
             if pose != pose:  # NaN check
-                return MotorCmd(self._cfg.forward_speed, 0.0)
-            ang = -self._cfg.line_p_gain * float(pose)
+                return MotorCmd(self._cfg.forward_speed,
+                                self._last_line_omega)
+            self._t_since_line = 0.0
+            ang = self._line_pid_step(float(pose))
+            self._last_line_omega = ang
             return MotorCmd(self._cfg.forward_speed, ang)
 
         if self._state == _State.CROSSING:
@@ -226,11 +269,14 @@ class ActionExecutor:
 
         if self._state == _State.APPROACHING:
             # Use the line-follow controller (with reduced speed) to stay
-            # straight while we wait for the goal marker. NaN -> coast.
+            # straight while we wait for the goal marker. NaN -> hold the
+            # last correction so the robot still curves toward the line.
             self._t_since_line = 0.0
             if pose != pose:
-                return MotorCmd(self._cfg.approach_speed, 0.0)
-            ang = -self._cfg.line_p_gain * float(pose)
+                return MotorCmd(self._cfg.approach_speed,
+                                self._last_line_omega)
+            ang = self._line_pid_step(float(pose))
+            self._last_line_omega = ang
             return MotorCmd(self._cfg.approach_speed, ang)
         return STOP
 
@@ -258,12 +304,13 @@ class ActionExecutor:
     def on_line_lost(self) -> MotorCmd:
         """Signal that no IR sensor currently sees a line."""
         if self._state == _State.DRIVING:
-            # Coast straight; line_lost_timeout will eventually fail us.
-            return MotorCmd(self._cfg.forward_speed, 0.0)
+            # Hold the last PID correction (see on_line_pose docstring);
+            # line_lost_timeout will eventually fail us.
+            return MotorCmd(self._cfg.forward_speed, self._last_line_omega)
         if self._state == _State.CROSSING:
             return MotorCmd(self._cfg.forward_speed, 0.0)
         if self._state == _State.APPROACHING:
-            return MotorCmd(self._cfg.approach_speed, 0.0)
+            return MotorCmd(self._cfg.approach_speed, self._last_line_omega)
         if self._state == _State.TURNING:
             # During LEAVE, losing the line is exactly the signal we are
             # waiting for. Promote to ACQUIRE immediately so we do not wait
@@ -386,6 +433,14 @@ class ActionExecutor:
         return MotorCmd(0.0, -self._turn_direction * w)
 
     # ---------------------------------------------------------- internals
+    def _line_pid_step(self, pose: float) -> float:
+        """Run one PID update with dt measured from the executor clock."""
+        dt = self._t_since_start - self._t_last_pose
+        if dt < 0.0:
+            dt = 0.0
+        self._t_last_pose = self._t_since_start
+        return self._line_pid.step(pose, dt)
+
     def _current_cmd(self) -> MotorCmd:
         if self._state == _State.DRIVING:
             return MotorCmd(self._cfg.forward_speed, 0.0)

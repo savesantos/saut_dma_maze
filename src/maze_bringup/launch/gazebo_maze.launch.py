@@ -53,6 +53,48 @@ _HEADING_TO_YAW = {0: math.pi / 2,   # N
                    3: math.pi}       # W
 
 
+def _pin_gazebo_camera() -> None:
+    """Strip persisted camera state from ``~/.gazebo/gui.ini``.
+
+    gzclient saves its window geometry and last user-camera pose to
+    ``~/.gazebo/gui.ini`` on exit, then reapplies them on the next start
+    *after* loading the world's ``<gui><camera>`` block. The net effect is
+    that the top-down camera baked into our generated ``.world`` files is
+    silently overridden by whatever orbit pose the user last left the
+    client in.
+
+    To make the SDF camera authoritative again we remove the persisted
+    ``[geometry]`` and ``[camera]`` sections (leaving all other sections
+    untouched). gzclient regenerates them with neutral defaults that do
+    not override the world pose.
+    """
+    ini_path = os.path.expanduser('~/.gazebo/gui.ini')
+    if not os.path.exists(ini_path):
+        return
+    try:
+        with open(ini_path, 'r') as f:
+            lines = f.readlines()
+    except OSError:
+        return
+    cleaned: List[str] = []
+    skip = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith('[') and stripped.endswith(']'):
+            section = stripped[1:-1].strip().lower()
+            skip = section in ('geometry', 'camera')
+            if skip:
+                continue
+        if skip:
+            continue
+        cleaned.append(line)
+    try:
+        with open(ini_path, 'w') as f:
+            f.writelines(cleaned)
+    except OSError:
+        return
+
+
 def _spawn_and_nodes(context: LaunchContext, *args, **kwargs):
     """Compute spawn pose from start cell, then emit Gazebo + node actions."""
     bringup_share = get_package_share_directory('maze_bringup')
@@ -83,6 +125,16 @@ def _spawn_and_nodes(context: LaunchContext, *args, **kwargs):
     spawn_x = start_col * cell_size
     spawn_y = -start_row * cell_size
     spawn_yaw = _HEADING_TO_YAW.get(start_heading, 0.0)
+
+    # Pin Gazebo's user camera to the top-down view defined in the world
+    # file. gzclient persists ``[geometry]`` and ``[camera]`` in
+    # ``~/.gazebo/gui.ini`` and applies them on the next start, which
+    # silently overrides the world's ``<gui><camera>`` block. Strip those
+    # two sections so the SDF wins. We only touch gui.ini when the GUI is
+    # actually being launched (``headless == 'false'``) and we keep all
+    # other user-tuned sections intact.
+    if str(headless).lower() == 'false':
+        _pin_gazebo_camera()
 
     # Read maze dimensions for cell_tracker.
     with open(maze_path, 'r') as f:
@@ -139,11 +191,39 @@ def _spawn_and_nodes(context: LaunchContext, *args, **kwargs):
             'turn_speed': 0.60,
             'control_rate_hz': 20.0,
             'action_timeout_s': 12.0,
-            # Sim-specific line-follow gain: gazebo_ros_diff_drive reaches
-            # only ~80% of commanded omega, and the lines are narrow, so
-            # bump the P gain to ~2.5x the default to keep the robot
-            # centred during DRIVING. Hardware may want the default 0.8.
-            'line_p_gain': 2.0,
+            # Line-follow PID, derived from the small-angle line-follower
+            # ODE so the same gains transfer to the AlphaBot2 with only a
+            # touch-up of ki if needed.
+            #
+            # Plant (small heading errors):
+            #   d(lat)/dt    = v * theta
+            #   d(theta)/dt  = omega = -(kp/W)*lat - (kd*v/W)*theta
+            # where W = line_capture_width = 0.04 m and v = forward_speed.
+            # That is a 2nd-order LTI system with:
+            #   omega_n = sqrt(v * kp / W)
+            #   zeta    = (kd/2) * sqrt(v / (W * kp))
+            #
+            # Target a well-damped response (zeta ~= 0.7) so the robot
+            # rejects post-turn heading bias and small motor asymmetry
+            # without zig-zag and without monotonic drift off the line:
+            #   kp = 1.2 -> omega_n ~= 1.73 rad/s (settles in ~1.6 s)
+            #   kd = 1.0 -> zeta ~= 0.72
+            # The previous (kp=1.0, kd=0.10) was zeta ~= 0.08, essentially
+            # undamped: any heading bias walked the robot off the line
+            # before P could pull it back, and at small |pose| the
+            # restoring force was too weak (1 cm offset -> only 0.25 rad/s
+            # -> 40 cm turning radius, two cells per correction cycle).
+            #
+            # ki stays at 0: D-action plus the line-loss hold below
+            # rejects bias without integral windup. On real hardware add
+            # ki ~= 0.05-0.1 only if a measurable steady-state drift
+            # remains after kp/kd are tuned by this same procedure.
+            'line_p_gain': 1.2,
+            'line_i_gain': 0.0,
+            'line_d_gain': 1.0,
+            'line_d_filter_tau': 0.04,
+            'line_i_clamp': 0.5,
+            'line_omega_clamp': 1.8,
             # Sim-specific turn calibration: gazebo_ros_diff_drive reaches
             # ~80% of commanded omega in steady state, so a commanded-yaw
             # integral of pi/2 only rotates ~73 degrees. Bump the target.

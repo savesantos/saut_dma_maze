@@ -55,6 +55,11 @@ class ActionExecutorNode(Node):
         self.declare_parameter('forward_speed', 0.10)
         self.declare_parameter('turn_speed', 0.60)
         self.declare_parameter('line_p_gain', 0.8)
+        self.declare_parameter('line_i_gain', 0.0)
+        self.declare_parameter('line_d_gain', 0.0)
+        self.declare_parameter('line_d_filter_tau', 0.05)
+        self.declare_parameter('line_i_clamp', 0.5)
+        self.declare_parameter('line_omega_clamp', 2.5)
         self.declare_parameter('action_timeout_s', 8.0)
         self.declare_parameter('line_lost_timeout_s', 0.5)
         # Centering creep (FORWARD's post-/intersection traversal of the
@@ -74,6 +79,14 @@ class ActionExecutorNode(Node):
             forward_speed=float(self.get_parameter('forward_speed').value),
             turn_speed=float(self.get_parameter('turn_speed').value),
             line_p_gain=float(self.get_parameter('line_p_gain').value),
+            line_i_gain=float(self.get_parameter('line_i_gain').value),
+            line_d_gain=float(self.get_parameter('line_d_gain').value),
+            line_d_filter_tau=float(
+                self.get_parameter('line_d_filter_tau').value),
+            line_i_clamp=float(
+                self.get_parameter('line_i_clamp').value),
+            line_omega_clamp=float(
+                self.get_parameter('line_omega_clamp').value),
             action_timeout_s=float(
                 self.get_parameter('action_timeout_s').value),
             line_lost_timeout_s=float(
