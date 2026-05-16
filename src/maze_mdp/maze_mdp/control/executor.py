@@ -5,8 +5,12 @@ Drives a differential-drive robot along a black-line grid:
 
 - ``FORWARD``: line-follow with a proportional controller until the next
   intersection event (all five IR sensors on a line).
-- ``TURN_LEFT`` / ``TURN_RIGHT``: rotate in place until a perpendicular line
-  is acquired again under the centre sensor.
+- ``TURN_LEFT`` / ``TURN_RIGHT``: 4-phase closed-loop turn
+  (``CENTER`` -> ``LEAVE`` -> ``ACQUIRE`` -> ``LOCK``) using the IR strip
+  plus the commanded-yaw integral as a sanity gate. The robot first creeps
+  forward by ``pivot_creep_s`` so the wheel axle ends up over the crossing
+  (the IR strip leads the axle), then spins in place until the perpendicular
+  line has been left behind and re-acquired, and finally creeps to centre.
 
 The executor is intentionally I/O-free: callers feed it events
 (``on_line_pose``, ``on_intersection``, ``on_line_lost``, ``on_tick``) and read
@@ -31,6 +35,13 @@ class _State(Enum):
     TURNING = 'turning'
     APPROACHING = 'approaching'
     DONE = 'done'
+
+
+class _TurnPhase(Enum):
+    CENTER = 'center'      # creep forward to put the axle over the cross
+    LEAVE = 'leave'        # spin until the strip leaves the originating line
+    ACQUIRE = 'acquire'    # spin until the perpendicular line is re-acquired
+    LOCK = 'lock'          # slow P-control until centred on the new line
 
 
 # DiscreteActionGoal.DRIVE_UNTIL_MARKER constant; kept here so the
@@ -74,13 +85,36 @@ class ExecutorConfig:
     """Static tuning of the state machine."""
 
     forward_speed: float = 0.10       # m/s along the line
-    turn_speed: float = 0.60          # rad/s for in-place rotation
+    turn_speed: float = 0.60          # rad/s for in-place rotation (fast)
     line_p_gain: float = 0.8          # rad/s per unit line_pose error
     action_timeout_s: float = 8.0     # global per-action timeout
     line_lost_timeout_s: float = 0.5  # forward fail after this with no line
-    turn_exit_pose: float = 0.20      # |pose| < this locks the turn
-    turn_exit_min_excursion: float = 0.5  # ... after first exceeding this
     approach_speed: float = 0.08      # m/s while creeping toward the marker
+
+    # ---- Turn FSM tuning ----
+    # CENTER phase: drive forward at ``forward_speed`` for this many seconds
+    # after the policy issues TURN_*, so the rotation axis (wheel axle) sits
+    # over the intersection rather than the IR strip. Calibrate to
+    # ``strip_to_axle_distance / forward_speed``.
+    pivot_creep_s: float = 0.20
+    # LEAVE phase exit: ``|pose|`` past which the strip is considered to have
+    # left the originating line.
+    turn_leave_threshold: float = 0.5
+    # ACQUIRE -> LOCK gate: ``|pose|`` re-entering this window after having
+    # crossed ``turn_leave_threshold`` (and after enough yaw has accrued).
+    turn_acquire_threshold: float = 0.5
+    # LOCK phase: angular speed = this * ``turn_speed`` (slow creep).
+    turn_lock_speed_factor: float = 0.25
+    # LOCK exit: ``|pose|`` window for declaring the turn complete.
+    turn_lock_threshold: float = 0.15
+    # LOCK exit: number of consecutive samples below ``turn_lock_threshold``
+    # required before publishing success (debounce against IR noise).
+    turn_lock_debounce: int = 3
+    # Yaw-integral gates (using commanded omega only; cheap sanity bound):
+    # do not allow LOCK before this much rotation has accumulated.
+    turn_min_yaw_rad: float = 1.10   # ~0.7 * pi/2
+    # Hard-fail the turn (LINE_LOST) once this much rotation has accumulated.
+    turn_max_yaw_rad: float = 2.05   # ~1.3 * pi/2
 
 
 class ActionExecutor:
@@ -94,9 +128,13 @@ class ActionExecutor:
         self._t_since_start: float = 0.0
         self._t_since_line: float = 0.0
         self._result: Optional[ActionResult] = None
-        # Turn state: have we yet seen the strip leave the centre line?
-        self._turn_excursion_seen: bool = False
-        self._turn_direction: int = 0  # -1 left, +1 right
+        # Turn-specific bookkeeping.
+        self._turn_phase: _TurnPhase = _TurnPhase.CENTER
+        self._turn_direction: int = 0  # -1 left (CCW), +1 right (CW)
+        self._t_pivot: float = 0.0
+        self._yaw_accum: float = 0.0   # |integrated commanded omega|
+        self._lock_streak: int = 0
+        self._leave_seen: bool = False  # safety: only LOCK after LEAVE
 
     # ----------------------------------------------------------- public API
     @property
@@ -122,18 +160,25 @@ class ActionExecutor:
         self._goal_id = int(goal_id)
         self._t_since_start = 0.0
         self._t_since_line = 0.0
-        self._turn_excursion_seen = False
+        self._yaw_accum = 0.0
+        self._lock_streak = 0
+        self._leave_seen = False
         if self._action == int(Action.FORWARD):
             self._state = _State.DRIVING
             return MotorCmd(self._cfg.forward_speed, 0.0)
         if self._action == int(Action.TURN_LEFT):
             self._state = _State.TURNING
             self._turn_direction = -1
-            return MotorCmd(0.0, +self._cfg.turn_speed)
+            self._turn_phase = _TurnPhase.CENTER
+            self._t_pivot = 0.0
+            # CENTER starts with a forward creep; do NOT spin yet.
+            return MotorCmd(self._cfg.forward_speed, 0.0)
         if self._action == int(Action.TURN_RIGHT):
             self._state = _State.TURNING
             self._turn_direction = +1
-            return MotorCmd(0.0, -self._cfg.turn_speed)
+            self._turn_phase = _TurnPhase.CENTER
+            self._t_pivot = 0.0
+            return MotorCmd(self._cfg.forward_speed, 0.0)
         if self._action == DRIVE_UNTIL_MARKER:
             self._state = _State.APPROACHING
             return MotorCmd(self._cfg.approach_speed, 0.0)
@@ -159,16 +204,10 @@ class ActionExecutor:
                 return MotorCmd(self._cfg.forward_speed, 0.0)
             ang = -self._cfg.line_p_gain * float(pose)
             return MotorCmd(self._cfg.forward_speed, ang)
+
         if self._state == _State.TURNING:
-            if pose != pose:  # NaN -> still off the line, keep turning
-                return self._turn_cmd()
-            if abs(pose) >= self._cfg.turn_exit_min_excursion:
-                self._turn_excursion_seen = True
-            if (self._turn_excursion_seen
-                    and abs(pose) < self._cfg.turn_exit_pose):
-                self._finish(success=True, failure_mode=FailureMode.NONE)
-                return STOP
-            return self._turn_cmd()
+            return self._turn_on_pose(pose)
+
         if self._state == _State.APPROACHING:
             # Use the line-follow controller (with reduced speed) to stay
             # straight while we wait for the goal marker. NaN -> coast.
@@ -184,9 +223,10 @@ class ActionExecutor:
         if self._state == _State.DRIVING:
             self._finish(success=True, failure_mode=FailureMode.NONE)
             return STOP
-        # Intersections inside an APPROACHING phase are ignored: the
-        # goal cell may sit beyond one more intersection, and only the
-        # marker decides when to stop.
+        # Intersections inside an APPROACHING phase are ignored: the goal
+        # cell may sit beyond one more intersection, and only the marker
+        # decides when to stop. Mid-turn intersections (the cross passing
+        # under the strip during the spin) are also ignored.
         return self._current_cmd()
 
     def on_marker_seen(self) -> MotorCmd:
@@ -203,6 +243,14 @@ class ActionExecutor:
             return MotorCmd(self._cfg.forward_speed, 0.0)
         if self._state == _State.APPROACHING:
             return MotorCmd(self._cfg.approach_speed, 0.0)
+        if self._state == _State.TURNING:
+            # During LEAVE, losing the line is exactly the signal we are
+            # waiting for. Promote to ACQUIRE immediately so we do not wait
+            # for an unattainable |pose| threshold.
+            if self._turn_phase == _TurnPhase.LEAVE:
+                self._leave_seen = True
+                self._turn_phase = _TurnPhase.ACQUIRE
+            return self._turn_cmd()
         return self._current_cmd()
 
     def on_tick(self, dt: float) -> MotorCmd:
@@ -214,12 +262,17 @@ class ActionExecutor:
         if not self.is_active:
             return STOP
         self._t_since_start += dt
+
         if self._state == _State.DRIVING:
             self._t_since_line += dt
             if self._t_since_line >= self._cfg.line_lost_timeout_s:
                 self._finish(success=False,
                              failure_mode=FailureMode.LINE_LOST)
                 return STOP
+
+        if self._state == _State.TURNING:
+            return self._turn_on_tick(dt)
+
         # APPROACHING tolerates line loss (we may overshoot the last
         # intersection on the way to the marker); only the global
         # action_timeout aborts it.
@@ -228,10 +281,91 @@ class ActionExecutor:
             return STOP
         return self._current_cmd()
 
-    # ---------------------------------------------------------- internals
-    def _turn_cmd(self) -> MotorCmd:
-        return MotorCmd(0.0, -self._turn_direction * self._cfg.turn_speed)
+    # -------------------------------------------------------- turn helpers
+    def _turn_on_pose(self, pose: float) -> MotorCmd:
+        if self._turn_phase == _TurnPhase.CENTER:
+            # Pose updates during the centring creep are ignored: the cross
+            # makes the line signal ambiguous and we steer straight anyway.
+            return MotorCmd(self._cfg.forward_speed, 0.0)
 
+        if self._turn_phase == _TurnPhase.LEAVE:
+            if pose != pose:  # NaN -> treat as line lost
+                self._leave_seen = True
+                self._turn_phase = _TurnPhase.ACQUIRE
+                return self._turn_cmd()
+            if abs(pose) >= self._cfg.turn_leave_threshold:
+                self._leave_seen = True
+                self._turn_phase = _TurnPhase.ACQUIRE
+            return self._turn_cmd()
+
+        if self._turn_phase == _TurnPhase.ACQUIRE:
+            if pose != pose:
+                return self._turn_cmd()
+            if not (self._leave_seen
+                    and abs(pose) <= self._cfg.turn_acquire_threshold
+                    and self._yaw_accum >= self._cfg.turn_min_yaw_rad):
+                return self._turn_cmd()
+            self._turn_phase = _TurnPhase.LOCK
+            self._lock_streak = 0
+            # Fall through to LOCK handling with this same sample.
+
+        if self._turn_phase == _TurnPhase.LOCK:
+            if pose != pose:
+                self._lock_streak = 0
+                return self._turn_cmd(lock=True)
+            if abs(pose) < self._cfg.turn_lock_threshold:
+                self._lock_streak += 1
+                if self._lock_streak >= self._cfg.turn_lock_debounce:
+                    self._finish(success=True,
+                                 failure_mode=FailureMode.NONE)
+                    return STOP
+            else:
+                self._lock_streak = 0
+            lock_w = self._cfg.turn_speed * self._cfg.turn_lock_speed_factor
+            ang = -self._cfg.line_p_gain * float(pose)
+            if ang > lock_w:
+                ang = lock_w
+            elif ang < -lock_w:
+                ang = -lock_w
+            return MotorCmd(0.0, ang)
+
+        return self._turn_cmd()
+
+    def _turn_on_tick(self, dt: float) -> MotorCmd:
+        if self._turn_phase == _TurnPhase.CENTER:
+            self._t_pivot += dt
+            if self._t_pivot >= self._cfg.pivot_creep_s:
+                self._turn_phase = _TurnPhase.LEAVE
+                return self._turn_cmd()
+            return MotorCmd(self._cfg.forward_speed, 0.0)
+
+        # Integrate |commanded omega| only while actually spinning.
+        if self._turn_phase in (_TurnPhase.LEAVE, _TurnPhase.ACQUIRE):
+            self._yaw_accum += self._cfg.turn_speed * dt
+        elif self._turn_phase == _TurnPhase.LOCK:
+            self._yaw_accum += (
+                self._cfg.turn_speed * self._cfg.turn_lock_speed_factor * dt)
+
+        if self._yaw_accum >= self._cfg.turn_max_yaw_rad:
+            # Spun past the safety bound without locking on -> fail.
+            self._finish(success=False, failure_mode=FailureMode.LINE_LOST)
+            return STOP
+
+        if self._t_since_start >= self._cfg.action_timeout_s:
+            self._finish(success=False, failure_mode=FailureMode.TIMEOUT)
+            return STOP
+        return self._turn_cmd()
+
+    def _turn_cmd(self, lock: bool = False) -> MotorCmd:
+        if self._turn_phase == _TurnPhase.CENTER:
+            return MotorCmd(self._cfg.forward_speed, 0.0)
+        w = self._cfg.turn_speed
+        if lock or self._turn_phase == _TurnPhase.LOCK:
+            w *= self._cfg.turn_lock_speed_factor
+        # turn_direction: -1 left -> +omega; +1 right -> -omega.
+        return MotorCmd(0.0, -self._turn_direction * w)
+
+    # ---------------------------------------------------------- internals
     def _current_cmd(self) -> MotorCmd:
         if self._state == _State.DRIVING:
             return MotorCmd(self._cfg.forward_speed, 0.0)
