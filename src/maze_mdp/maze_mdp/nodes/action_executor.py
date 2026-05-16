@@ -57,15 +57,18 @@ class ActionExecutorNode(Node):
         self.declare_parameter('line_p_gain', 0.8)
         self.declare_parameter('action_timeout_s', 8.0)
         self.declare_parameter('line_lost_timeout_s', 0.5)
-        # Turn FSM (CENTER -> LEAVE -> ACQUIRE -> LOCK) tuning.
-        self.declare_parameter('pivot_creep_s', 0.20)
+        # Centering creep (FORWARD's post-/intersection traversal of the
+        # cross). Calibrate to ``strip_to_axle_distance / forward_speed``.
+        self.declare_parameter('pivot_creep_s', 0.45)
+        # Turn FSM (LEAVE -> ACQUIRE -> LOCK) tuning.
         self.declare_parameter('turn_leave_threshold', 0.5)
         self.declare_parameter('turn_acquire_threshold', 0.5)
         self.declare_parameter('turn_lock_speed_factor', 0.25)
         self.declare_parameter('turn_lock_threshold', 0.15)
         self.declare_parameter('turn_lock_debounce', 3)
         self.declare_parameter('turn_min_yaw_rad', 1.10)
-        self.declare_parameter('turn_max_yaw_rad', 2.05)
+        self.declare_parameter('turn_target_yaw_rad', 1.5708)
+        self.declare_parameter('turn_max_yaw_rad', 2.50)
 
         cfg = ExecutorConfig(
             forward_speed=float(self.get_parameter('forward_speed').value),
@@ -89,6 +92,8 @@ class ActionExecutorNode(Node):
                 self.get_parameter('turn_lock_debounce').value),
             turn_min_yaw_rad=float(
                 self.get_parameter('turn_min_yaw_rad').value),
+            turn_target_yaw_rad=float(
+                self.get_parameter('turn_target_yaw_rad').value),
             turn_max_yaw_rad=float(
                 self.get_parameter('turn_max_yaw_rad').value),
         )

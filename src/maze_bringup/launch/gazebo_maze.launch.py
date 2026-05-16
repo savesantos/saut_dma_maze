@@ -139,6 +139,18 @@ def _spawn_and_nodes(context: LaunchContext, *args, **kwargs):
             'turn_speed': 0.60,
             'control_rate_hz': 20.0,
             'action_timeout_s': 12.0,
+            # Sim-specific line-follow gain: gazebo_ros_diff_drive reaches
+            # only ~80% of commanded omega, and the lines are narrow, so
+            # bump the P gain to ~2.5x the default to keep the robot
+            # centred during DRIVING. Hardware may want the default 0.8.
+            'line_p_gain': 2.0,
+            # Sim-specific turn calibration: gazebo_ros_diff_drive reaches
+            # ~80% of commanded omega in steady state, so a commanded-yaw
+            # integral of pi/2 only rotates ~73 degrees. Bump the target.
+            # On real hardware this should be re-measured (likely closer
+            # to pi/2).
+            'turn_target_yaw_rad': 1.96,
+            'turn_max_yaw_rad': 2.80,
         }],
     )
 

@@ -1,148 +1,197 @@
-# Turn Controller — 4-Phase IR Turn FSM
+# Turn Controller — Cross-Centring FORWARD + 3-Phase IR Turn
 
-This document describes how the discrete `TURN_LEFT` / `TURN_RIGHT` actions are executed by [src/maze_mdp/maze_mdp/control/executor.py](../src/maze_mdp/maze_mdp/control/executor.py).
-It applies equally to Gazebo and to the AlphaBot2 hardware: the executor is ROS-free and consumes the same `/line_pose`, `/intersection`, `/line_lost` event stream in both.
+This document describes how the discrete maze actions (`FORWARD`, `TURN_LEFT`, `TURN_RIGHT`, `DRIVE_UNTIL_MARKER`) are executed by [src/maze_mdp/maze_mdp/control/executor.py](../src/maze_mdp/maze_mdp/control/executor.py).
+The executor is intentionally ROS-free; it is wrapped for ROS in [src/maze_mdp/maze_mdp/nodes/action_executor.py](../src/maze_mdp/maze_mdp/nodes/action_executor.py).
+The same state machine drives both Gazebo and the AlphaBot2 hardware via the unified `/line_pose`, `/intersection`, `/line_lost`, `/goal_marker_seen` event stream.
 
-## Problem
+Validated end-to-end on `fixture_3x3` (16 May 2026): VI policy, goal reached, turns landing within ~1° of the cardinal target.
+
+## Problem statement
 
 `/intersection` fires when **all five IR sensors** sit on a black line.
 On the AlphaBot2 the IR strip is mounted **forward of the wheel axle**.
-At the moment of the event, the *strip* is over the crossing but the *rotation axis* is still ~one strip-to-axle distance behind it.
-Spinning in place from that pose drags the strip off the crossing and the robot ends the turn straddling the wrong line.
+At the moment of the event:
 
-The previous single-pass logic (`turn_exit_min_excursion` followed by `turn_exit_pose`) was also fragile against:
+- The IR strip is over the crossing.
+- The wheel axle (rotation axis) is still ~one strip-to-axle distance *behind* the cross.
 
-- re-seeing the **same** originating line as the strip swings back across it,
-- locking prematurely on a stray segment at ~30°, and
-- noisy `/line_pose` samples near the threshold causing chattering exits.
+Spinning in place from that pose drags the strip off the crossing, the robot ends the turn straddling the wrong line, and cell-level tracking fails.
 
-## Approach
+A first attempt at fixing this put the centring creep at the start of every `TURN_*`. That failed on hardware because FORWARD had already braked the robot to a stop on `/intersection`; the policy round-trip then introduced 50–200 ms of dead time before TURN started, by which point the creep from a dead stop barely moved the chassis.
 
-The turn is split into four phases.
-States transition strictly forward; the originating line cannot end a turn because acquisition is gated on a commanded-yaw integral.
+## Architecture
+
+Centring lives in the **tail of FORWARD**, so the robot maintains momentum through the crossing. TURN can then spin in place immediately, with no separate centring phase.
 
 ```mermaid
 flowchart LR
-    A[CENTER<br/>creep forward] -->|t ≥ pivot_creep_s| B[LEAVE<br/>spin fast]
-    B -->|`pose` ≥ θ_leave<br/>or /line_lost| C[ACQUIRE<br/>spin fast]
-    C -->|`pose` ≤ θ_acquire<br/>AND yaw_accum ≥ yaw_min| D[LOCK<br/>slow P-control]
-    D -->|`pose` < θ_lock<br/>for N samples| E[(success)]
-    B -. yaw_accum ≥ yaw_max .-> F[(LINE_LOST)]
-    C -. yaw_accum ≥ yaw_max .-> F
+    subgraph FORWARD
+        D[DRIVING<br/>line-follow] -->|/intersection| C[CROSSING<br/>creep through cross]
+        C -->|t ≥ pivot_creep_s| F[(success)]
+    end
+    subgraph TURN
+        L[LEAVE<br/>spin fast] -->|`pose` ≥ θ_leave<br/>or /line_lost| A[ACQUIRE<br/>spin fast]
+        A -->|`pose` ≤ θ_acquire<br/>AND yaw_accum ≥ yaw_min| K[LOCK<br/>slow P-control]
+        K -->|`pose` < θ_lock<br/>for N samples| FK[(success)]
+        L -. yaw_accum ≥ yaw_target .-> YT[(success)]
+        A -. yaw_accum ≥ yaw_target .-> YT
+        K -. yaw_accum ≥ yaw_target .-> YT
+        L -. yaw_accum ≥ yaw_max .-> X[(LINE_LOST)]
+    end
+    F -.next action.-> L
 ```
 
-### Phase 1 — `CENTER` (axle alignment)
+Two independent completion paths for TURN — whichever fires first wins:
 
-On `start(TURN_*, …)` the executor does **not** rotate.
-It commands `linear = forward_speed`, `angular = 0` for `pivot_creep_s` seconds.
-This drives the wheel axle onto the crossing.
+1. **Yaw-integral target** (`turn_target_yaw_rad`, default `π/2`): primary completion criterion. Integrates the *commanded* `|ω|·dt`. Deterministic regardless of IR signal quality.
+2. **IR pose lock** (`LEAVE → ACQUIRE → LOCK`): refinement that can finish earlier on the real robot, where `/line_pose` is geometrically grounded.
 
-`pivot_creep_s` is the only hardware-geometry constant in the FSM and is calibrated as
-$$t_{\text{creep}} = \frac{d_{\text{strip→axle}}}{v_{\text{forward}}}$$
-For the AlphaBot2 (`d ≈ 2 cm`, `v ≈ 0.10 m/s`), `pivot_creep_s ≈ 0.20 s`.
+## State semantics
 
-`/line_pose` samples during this phase are deliberately ignored — the strip sits on the cross and the signal is ambiguous.
+### FORWARD — `DRIVING` → `CROSSING`
 
-### Phase 2 — `LEAVE` (commit to the spin)
-
-Spin at full `turn_speed`.
-Exit as soon as the strip has demonstrably left the originating line:
-
-- `|pose| ≥ turn_leave_threshold` (line slipped under one of the outer sensors), or
-- `/line_lost` / `pose == NaN` (line gone from under the strip entirely).
-
-The transition is latched in `_leave_seen` so a later return to the originating line cannot end the turn.
-
-### Phase 3 — `ACQUIRE` (wait for the perpendicular line)
-
-Keep spinning at full `turn_speed`.
-Promote to `LOCK` only when **both** conditions hold:
-
-- `|pose| ≤ turn_acquire_threshold` — strip is back over a line, and
-- `yaw_accum ≥ turn_min_yaw_rad` — enough rotation has accrued that the line under the strip cannot be the originating one.
-
-`yaw_accum` is the integral of the *commanded* `|ω|·dt` (no IMU, no encoders).
-With defaults `turn_min_yaw_rad ≈ 0.7 · π/2 ≈ 1.10 rad`, this rejects any line acquired at <40°.
-
-### Phase 4 — `LOCK` (centre on the new line)
-
-Drop angular speed to `turn_speed · turn_lock_speed_factor` (default `0.25 ×`).
-Run a clipped P-controller on `pose`:
-$$\omega = \mathrm{clip}\!\left(-K_p \cdot \text{pose},\ \pm\,\omega_{\text{lock}}\right)$$
-
-Declare success when `|pose| < turn_lock_threshold` for `turn_lock_debounce` consecutive samples.
-The streak counter resets on any out-of-band sample or NaN, which absorbs IR jitter cleanly.
-
-### Safety bound — `turn_max_yaw_rad`
-
-If `yaw_accum` exceeds `turn_max_yaw_rad` (default `~1.3 · π/2 ≈ 2.05 rad`) without locking, the turn fails fast with `FailureMode.LINE_LOST` instead of waiting on the global `action_timeout_s`.
-
-## Failure handling
-
-| Condition | Outcome | Mechanism |
+| State | Behaviour | Exit |
 | --- | --- | --- |
-| No perpendicular line within ~1.3·π/2 of spin | `LINE_LOST` | `turn_max_yaw_rad` gate in `_turn_on_tick` |
-| Strip leaves originating line then returns to it before `yaw_min` | turn keeps spinning | `_leave_seen` flag + `turn_min_yaw_rad` gate |
-| Single noisy in-band sample | streak resets | `turn_lock_debounce` |
-| Stuck FSM | `TIMEOUT` | global `action_timeout_s` |
-| External pre-emption | `ABORTED` | `abort()` / starting another action |
+| `DRIVING` | `linear = forward_speed`, `angular = -line_p_gain · pose`. NaN pose → coast straight. | `/intersection` → `CROSSING`; `_t_since_line ≥ line_lost_timeout_s` → `LINE_LOST` |
+| `CROSSING` | `linear = forward_speed`, `angular = 0`. Pose updates ignored (strip over a `+`). | `_t_crossing ≥ pivot_creep_s` → success |
 
-`/intersection` events received mid-turn are ignored — the FSM commits to the spin once it leaves `CENTER`.
+Note that `/intersection` does **not** stop the robot in `DRIVING`. The robot keeps moving forward through the cross at full `forward_speed`, with no braking. `pivot_creep_s` is calibrated so that exactly when the timer expires, the wheel axle is over the crossing.
 
-## Configuration
+### TURN — `LEAVE` → `ACQUIRE` → `LOCK`
 
-All knobs live on `ExecutorConfig` and are exposed as ROS parameters on `ActionExecutorNode`:
-
-| Parameter | Default | Meaning |
+| Phase | Angular speed | Promotes to next phase when |
 | --- | --- | --- |
-| `pivot_creep_s` | `0.20` | Forward creep duration before spinning. **Calibrate per chassis.** |
-| `turn_speed` | `0.60` rad/s | Fast spin rate in `LEAVE` / `ACQUIRE`. |
-| `turn_leave_threshold` | `0.5` | `|pose|` past which the strip has clearly left the line. |
-| `turn_acquire_threshold` | `0.5` | `|pose|` window for accepting the perpendicular line. |
-| `turn_lock_speed_factor` | `0.25` | Fraction of `turn_speed` used during `LOCK`. |
-| `turn_lock_threshold` | `0.15` | `|pose|` window for declaring centred. |
-| `turn_lock_debounce` | `3` | Consecutive in-band samples required to lock. |
-| `turn_min_yaw_rad` | `1.10` | Lower bound on integrated yaw before `LOCK` is allowed. |
-| `turn_max_yaw_rad` | `2.05` | Upper bound on integrated yaw before hard-failing. |
-| `line_p_gain` | `0.8` | P gain shared with FORWARD line-follow; applied (clipped) in `LOCK`. |
-| `action_timeout_s` | `8.0` s | Global action timeout. |
+| `LEAVE` | `turn_speed` | `|pose| ≥ turn_leave_threshold` OR `/line_lost` OR `pose == NaN` |
+| `ACQUIRE` | `turn_speed` | `|pose| ≤ turn_acquire_threshold` AND `yaw_accum ≥ turn_min_yaw_rad` |
+| `LOCK` | `turn_speed · turn_lock_speed_factor` with clipped P-control on pose | `|pose| < turn_lock_threshold` for `turn_lock_debounce` consecutive samples |
 
-The FSM is symmetric in direction: `turn_direction = -1` (left, CCW) gives positive `ω`, `+1` (right, CW) gives negative `ω`. If the L/R motors are asymmetric on hardware, calibrate them at the motor driver layer rather than by adding separate `turn_speed_left/right` here.
+Cross-phase guards that apply throughout TURN:
 
-## Why not the camera?
+- `yaw_accum ≥ turn_target_yaw_rad` → success (primary).
+- `yaw_accum ≥ turn_max_yaw_rad` → `LINE_LOST` (safety cap).
+- `_t_since_start ≥ action_timeout_s` → `TIMEOUT`.
 
-A previous proposal was to use the forward camera to draw / detect a guide line and centre the robot on the cross before spinning.
-We rejected this in favour of the IR-based loop:
+The `_leave_seen` flag latches the `LEAVE → ACQUIRE` transition so a later return to the originating line cannot end the turn.
+
+### `DRIVE_UNTIL_MARKER` (`APPROACHING`)
+
+| Behaviour | Exit |
+| --- | --- |
+| `linear = approach_speed`, line-follow at reduced speed. `/intersection` ignored (the goal cell may be one cross beyond). | `/goal_marker_seen` (true) → success; `action_timeout_s` → `TIMEOUT`. Line loss is *tolerated* — the marker is the only stop condition. |
+
+## Failure modes
+
+| Condition | Result | Mechanism |
+| --- | --- | --- |
+| FORWARD: no line for `line_lost_timeout_s` | `LINE_LOST` | `_t_since_line` accumulator |
+| TURN: over-rotation past `turn_max_yaw_rad` | `LINE_LOST` | yaw-integral safety cap |
+| Any state: stuck past `action_timeout_s` | `TIMEOUT` | global timeout |
+| External pre-emption (new action or `abort()`) | `ABORTED` | start/abort path |
+
+Intersection events received during `CROSSING`, `APPROACHING`, or `TURNING` are ignored — the executor commits to the current sub-state and only its specific exit condition can end it. Falling edges of `/goal_marker_seen` are ignored outside of `APPROACHING`.
+
+## Parameters
+
+All knobs are dataclass fields on `ExecutorConfig` and ROS parameters on `ActionExecutorNode`. Sim-specific calibrations are applied in [src/maze_bringup/launch/gazebo_maze.launch.py](../src/maze_bringup/launch/gazebo_maze.launch.py).
+
+| Parameter | Default | Sim override | Meaning |
+| --- | --- | --- | --- |
+| `forward_speed` | `0.10` m/s | — | Line-follow and crossing speed. |
+| `approach_speed` | `0.08` m/s | — | Speed during `DRIVE_UNTIL_MARKER`. |
+| `pivot_creep_s` | `0.45` s | — | Time spent in `CROSSING` after `/intersection`. **Calibrate to `strip_to_axle_distance / forward_speed`.** |
+| `turn_speed` | `0.60` rad/s | — | Spin rate in `LEAVE` / `ACQUIRE`. |
+| `turn_leave_threshold` | `0.5` | — | `|pose|` past which the strip has left the originating line. |
+| `turn_acquire_threshold` | `0.5` | — | `|pose|` window for accepting the perpendicular line. |
+| `turn_lock_speed_factor` | `0.25` | — | Fraction of `turn_speed` used during `LOCK`. |
+| `turn_lock_threshold` | `0.15` | — | `|pose|` window for declaring centred. |
+| `turn_lock_debounce` | `3` | — | Consecutive in-band samples to lock. |
+| `turn_min_yaw_rad` | `1.10` | — | Lower bound on integrated yaw before `LOCK` is allowed. |
+| `turn_target_yaw_rad` | `π/2 ≈ 1.5708` | `1.96` | **Primary** turn-completion criterion. |
+| `turn_max_yaw_rad` | `2.50` | `2.80` | Safety cap; over-rotation past this fails the turn. |
+| `line_p_gain` | `0.8` | — | P gain shared by `DRIVING` and `LOCK`. |
+| `line_lost_timeout_s` | `0.5` s | — | `DRIVING` fails after this without a line. |
+| `action_timeout_s` | `8.0` s | `12.0` | Global per-action timeout. |
+| `control_rate_hz` | `20.0` Hz | — | Tick rate for `on_tick(dt)`. |
+
+The FSM is symmetric in direction: `turn_direction = -1` (left, CCW) yields positive `ω`, `+1` (right, CW) yields negative `ω`.
+
+### Sim-vs-hardware calibration
+
+`gazebo_ros_diff_drive` reaches only ~80% of commanded ω in steady state due to inertia and the differential-drive plugin's first-order velocity response. A commanded-yaw integral of exactly π/2 therefore produces only ~73° of actual rotation, so `turn_target_yaw_rad` is bumped to `π/2 / 0.80 ≈ 1.96` in the Gazebo launch file.
+
+On real hardware the wheels track commanded ω much more closely (the AlphaBot2 motor driver runs an inner-loop controller). Re-calibrate once with the "spin and observe" procedure below; expected value is near the default `π/2`.
+
+## Why this design
+
+### Why centre in FORWARD, not in TURN
+
+- FORWARD has momentum: the robot is already moving forward at `forward_speed` when `/intersection` fires, so the creep through the cross is a simple velocity-hold rather than a restart from a stop.
+- TURN can then spin in place from its first tick, with no policy-runner round-trip latency between centring and spinning.
+- A single calibration constant (`pivot_creep_s = d_strip→axle / forward_speed`) captures the geometry.
+
+### Why a yaw-integral target instead of pure IR pose
+
+In Gazebo the synthetic `/line_pose` during a spin is generated analytically by [ir_driver_gazebo.py](../src/maze_mdp/maze_mdp/nodes/ir_driver_gazebo.py) as `copysign(|sin(2·δ)|, -yaw_rate)`, where δ is the deviation from the nearest cardinal heading. The **sign of this signal is fixed by the direction of rotation**, not by which side the line is on. So the LOCK phase's P-controller cannot correct overshoot — it can only stop on `|pose| < threshold`, which happens at every cardinal heading, not specifically the target one.
+
+Adding the explicit `turn_target_yaw_rad` criterion makes the turn deterministic in sim and adds a robust hard target on hardware. The IR-based LOCK still runs and can finish a turn earlier than the yaw target if the geometric signal is clean.
+
+### Why not use the camera for centring
+
+A previous proposal was to detect or draw a forward line in the camera image and centre on it before spinning. We rejected this:
 
 - At the crossing the camera sees a `+`, not a line; rejecting the perpendicular arm is brittle (shadows, glare, tape gaps).
 - The camera cannot close the loop on the spin itself — the forward line leaves the FOV almost immediately.
 - Camera frame rate on the Pi (~10–15 Hz) is an order of magnitude slower than the IR strip (~100 Hz).
-- The 1-DOF longitudinal alignment problem is solved exactly by `pivot_creep_s`, a single calibrated scalar.
+- The 1-DOF longitudinal alignment problem is solved exactly by `pivot_creep_s`, a single calibrated scalar, applied where the robot has not lost momentum.
 
 The camera is reserved for what only it can do: ArUco/AprilTag-based goal recognition during `DRIVE_UNTIL_MARKER` (see [fiducial_localizer.py](../src/maze_mdp/maze_mdp/nodes/fiducial_localizer.py)).
 
+## Validation log (Gazebo, fixture_3x3, 16 May 2026)
+
+VI policy `data/training/vi/fixture_3x3/20260514-185633-seed0/policy.npz`, start cell `(0, 0, E)`, goal `(2, 2)`.
+
+```
+dispatch goal_id=1 action=FORWARD       from (0,0,E)  -> success
+dispatch goal_id=2 action=FORWARD       from (0,1,E)  -> success
+dispatch goal_id=3 action=TURN_RIGHT    from (0,2,E)  -> success (ended yaw=-1.56, target -π/2 = -1.5708)
+dispatch goal_id=4 action=FORWARD       from (0,2,S)  -> success
+dispatch goal_id=5 action=DRIVE_UNTIL_MARKER from (1,2,S) -> success
+Goal reached.
+```
+
+Before sim calibration the same TURN landed at `yaw = -1.27 rad` (off by 17°), causing the subsequent FORWARD to drift off the line. After bumping `turn_target_yaw_rad` to `1.96`, the turn lands within 1° of the cardinal target.
+
 ## Testing
 
-[src/maze_mdp/test/test_executor.py](../src/maze_mdp/test/test_executor.py) covers:
+[src/maze_mdp/test/test_executor.py](../src/maze_mdp/test/test_executor.py) — 28 tests, all passing:
 
-- `CENTER` creep behaviour (no rotation, pose ignored, transition on timer).
-- Full `LEAVE → ACQUIRE → LOCK` sequence success.
-- Rejection of premature lock without excursion.
-- Rejection of premature lock before `turn_min_yaw_rad`.
+- FORWARD `DRIVING → CROSSING → success` sequence, including the post-`/intersection` creep window.
+- Pose updates during `CROSSING` do not steer.
+- Full TURN `LEAVE → ACQUIRE → LOCK` sequence success (pose-based exit).
+- TURN succeeds on yaw-integral target alone, without pose lock.
+- Rejection of premature lock without excursion / before `turn_min_yaw_rad`.
 - NaN / `/line_lost` promotion during `LEAVE`.
 - Hard-fail on `turn_max_yaw_rad`.
-- Unchanged behaviour of `FORWARD` and `DRIVE_UNTIL_MARKER`.
-
-Run with:
+- Action pre-emption, abort, idle-state no-ops, unknown-action error.
+- `DRIVE_UNTIL_MARKER`: line-pose steering, intersection-ignored, line-loss-tolerant, marker-seen completion, marker-outside-approach no-op.
 
 ```bash
 cd src/maze_mdp && python3 -m pytest test/test_executor.py -q
 ```
 
-## Tuning checklist on hardware
+## Tuning checklist (hardware)
 
-1. Measure `d_strip→axle` (mm); set `pivot_creep_s = d / forward_speed`.
-2. Verify `turn_leave_threshold` against the `line_pose_estimator` output — should be reachable in ~10° of spin.
-3. If the bot overshoots the new line: lower `turn_lock_speed_factor` to `0.15–0.20`, raise `turn_lock_debounce` to `4–5`.
-4. If the bot oscillates around the new line: lower `line_p_gain` (shared with `FORWARD`).
-5. If turns time out: confirm `turn_max_yaw_rad` is above `π/2` plus a comfortable margin (default `2.05 ≈ 1.3·π/2`).
+1. **Measure `d_strip→axle`** with calipers; set `pivot_creep_s = d / forward_speed` in seconds.
+2. **Verify on a straight**: FORWARD should visually end with the wheel axle over the crossing, not before.
+3. **Calibrate `turn_target_yaw_rad`**: command a single TURN_LEFT from a known heading, measure the actual yaw change. If the robot under-rotates, bump `turn_target_yaw_rad` proportionally; if over-rotates, reduce.
+4. **Verify on a turn**: TURN_LEFT/RIGHT should re-acquire the perpendicular line near `|pose| ≈ 0`, not the originating line.
+5. **If the bot overshoots during `LOCK`**: lower `turn_lock_speed_factor` to `0.15–0.20`, raise `turn_lock_debounce` to `4–5`.
+6. **If the bot oscillates around the new line**: lower `line_p_gain` (shared with `FORWARD`).
+7. **If turns time out**: confirm `turn_max_yaw_rad` is above `turn_target_yaw_rad` by a comfortable margin.
+
+## Future work
+
+- **Closed-loop centring.** Replace the open-loop `pivot_creep_s` timer with a falling-edge `/intersection_clear` event from the IR driver (or expose raw `/line_sensors` to the executor). Then `CROSSING` would end exactly when the strip *exits* the cross — meaning the axle is now under it — independent of `forward_speed` tuning.
+- **Closed-loop yaw target.** Subscribe to the diff-drive plugin's actual wheel velocities (or use wheel-encoder odometry on hardware) and integrate measured ω instead of commanded ω. Removes the sim-vs-hardware calibration discrepancy.
+- **Yaw recovery after turn**. If FORWARD immediately after a TURN loses the line, do a small sweeping yaw search instead of failing on `line_lost_timeout_s`. Not yet implemented because the yaw-target calibration above made it unnecessary in sim.
+- **Per-side turn calibration**. Expose `turn_target_yaw_rad_left/right` if the AlphaBot2 motors prove asymmetric in turn execution.
