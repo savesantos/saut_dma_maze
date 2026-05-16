@@ -39,36 +39,28 @@ def test_cell_center_convention():
 
 
 def test_open_3x3_segment_count():
-    # 3 horizontal cell-to-cell segments per row * 3 rows = 6 horizontal.
-    # Same vertically -> 6 vertical. Total 12.
-    assert len(_line_segments(_open_3x3(), 0.2)) == 12
+    # Each walkable cell hosts a full cross (1 horizontal + 1 vertical).
+    # 9 walkable cells -> 18 segments.
+    assert len(_line_segments(_open_3x3(), 0.2)) == 18
 
 
 def test_walls_break_segments():
     maze = _corridor_5x5()
     segs = _line_segments(maze, 0.2)
-    # The walled cells (1, 1..3) and (3, 1..3) cannot host any segments
-    # touching them. Sanity: no segment endpoint coincides with a wall cell.
-    for cx, cy, _, _ in segs:
-        # Map back to cell indices via inverse formulas. cs=0.2.
-        # A horizontal segment at midpoint (cx, cy) connects cells at
-        # cy/-0.2 = row, both rounded to int after dividing.
-        pass  # geometric check is overkill; count check below suffices.
-    # 5x5 fully open would have 5*4*2 = 40. The two walled rows (1 and 3)
-    # each contribute 0 horizontal segments and only 2 vertical segments
-    # (at cols 0 and 4). Hand count: rows 0/2/4 give 4h+2v each = 18;
-    # walled rows give 2v each = 4 - but the verticals between row 1<->2,
-    # 0<->1 etc. were already counted from the upper row's perspective.
-    # Pin to the regression value the implementation produces.
-    assert len(segs) == 20
+    # Each walkable cell contributes exactly 2 segments (cross arms).
+    # Walkable count: rows 0,2,4 have 5 each; rows 1,3 have 2 each
+    # (cols 0 and 4) -> 5*3 + 2*2 = 19 walkable cells -> 38 segments.
+    walkable_count = sum(sum(row) for row in maze.walkable)
+    assert walkable_count == 19
+    assert len(segs) == 2 * walkable_count == 38
 
 
 def test_sdf_render_contains_expected_blocks():
     sdf = maze_to_sdf(_open_3x3(), cell_size=0.2)
     assert '<sdf version="1.6">' in sdf
     assert 'goal_marker' in sdf
-    # 12 line links for a 3x3 open maze.
-    assert sdf.count('<link name="line_') == 12
+    # 18 line links (one horizontal + one vertical per walkable cell).
+    assert sdf.count('<link name="line_') == 18
 
 
 def test_real_fixture_files_parse(tmp_path):

@@ -3,8 +3,7 @@
   <world name="maze">
     <gui fullscreen="0">
       <camera name="user_camera">
-        <!-- Top-down view centered on the maze (X right, Y up in screen). -->
-        <pose>0.2000 -0.2000 1.2000 0 1.5707 1.5707</pose>
+        <pose>0.2000 -0.2000 1.2600 0 1.5707 1.5707</pose>
       </camera>
     </gui>
 
@@ -47,7 +46,7 @@
     <model name="maze_lines">
       <static>true</static>
     <link name="line_0">
-      <pose>0.1000 0.0000 0.0005 0 0 0.0000</pose>
+      <pose>0.0000 0.0000 0.0005 0 0 0.0000</pose>
       <visual name="v">
         <geometry><box><size>0.2000 0.0150 0.0010</size></box></geometry>
         <material>
@@ -61,7 +60,7 @@
       </visual>
     </link>
     <link name="line_1">
-      <pose>0.0000 -0.1000 0.0005 0 0 1.5708</pose>
+      <pose>0.0000 0.0000 0.0005 0 0 1.5708</pose>
       <visual name="v">
         <geometry><box><size>0.2000 0.0150 0.0010</size></box></geometry>
         <material>
@@ -75,7 +74,7 @@
       </visual>
     </link>
     <link name="line_2">
-      <pose>0.3000 0.0000 0.0005 0 0 0.0000</pose>
+      <pose>0.2000 0.0000 0.0005 0 0 0.0000</pose>
       <visual name="v">
         <geometry><box><size>0.2000 0.0150 0.0010</size></box></geometry>
         <material>
@@ -89,7 +88,7 @@
       </visual>
     </link>
     <link name="line_3">
-      <pose>0.2000 -0.1000 0.0005 0 0 1.5708</pose>
+      <pose>0.2000 0.0000 0.0005 0 0 1.5708</pose>
       <visual name="v">
         <geometry><box><size>0.2000 0.0150 0.0010</size></box></geometry>
         <material>
@@ -103,7 +102,7 @@
       </visual>
     </link>
     <link name="line_4">
-      <pose>0.4000 -0.1000 0.0005 0 0 1.5708</pose>
+      <pose>0.4000 0.0000 0.0005 0 0 0.0000</pose>
       <visual name="v">
         <geometry><box><size>0.2000 0.0150 0.0010</size></box></geometry>
         <material>
@@ -117,7 +116,7 @@
       </visual>
     </link>
     <link name="line_5">
-      <pose>0.1000 -0.2000 0.0005 0 0 0.0000</pose>
+      <pose>0.4000 0.0000 0.0005 0 0 1.5708</pose>
       <visual name="v">
         <geometry><box><size>0.2000 0.0150 0.0010</size></box></geometry>
         <material>
@@ -131,7 +130,7 @@
       </visual>
     </link>
     <link name="line_6">
-      <pose>0.0000 -0.3000 0.0005 0 0 1.5708</pose>
+      <pose>0.0000 -0.2000 0.0005 0 0 0.0000</pose>
       <visual name="v">
         <geometry><box><size>0.2000 0.0150 0.0010</size></box></geometry>
         <material>
@@ -145,7 +144,7 @@
       </visual>
     </link>
     <link name="line_7">
-      <pose>0.3000 -0.2000 0.0005 0 0 0.0000</pose>
+      <pose>0.0000 -0.2000 0.0005 0 0 1.5708</pose>
       <visual name="v">
         <geometry><box><size>0.2000 0.0150 0.0010</size></box></geometry>
         <material>
@@ -159,7 +158,7 @@
       </visual>
     </link>
     <link name="line_8">
-      <pose>0.2000 -0.3000 0.0005 0 0 1.5708</pose>
+      <pose>0.2000 -0.2000 0.0005 0 0 0.0000</pose>
       <visual name="v">
         <geometry><box><size>0.2000 0.0150 0.0010</size></box></geometry>
         <material>
@@ -173,7 +172,7 @@
       </visual>
     </link>
     <link name="line_9">
-      <pose>0.4000 -0.3000 0.0005 0 0 1.5708</pose>
+      <pose>0.2000 -0.2000 0.0005 0 0 1.5708</pose>
       <visual name="v">
         <geometry><box><size>0.2000 0.0150 0.0010</size></box></geometry>
         <material>
@@ -187,7 +186,7 @@
       </visual>
     </link>
     <link name="line_10">
-      <pose>0.1000 -0.4000 0.0005 0 0 0.0000</pose>
+      <pose>0.4000 -0.2000 0.0005 0 0 0.0000</pose>
       <visual name="v">
         <geometry><box><size>0.2000 0.0150 0.0010</size></box></geometry>
         <material>
@@ -201,7 +200,91 @@
       </visual>
     </link>
     <link name="line_11">
-      <pose>0.3000 -0.4000 0.0005 0 0 0.0000</pose>
+      <pose>0.4000 -0.2000 0.0005 0 0 1.5708</pose>
+      <visual name="v">
+        <geometry><box><size>0.2000 0.0150 0.0010</size></box></geometry>
+        <material>
+          <ambient>0 0 0 1</ambient>
+          <diffuse>0 0 0 1</diffuse>
+          <script>
+            <uri>file://media/materials/scripts/gazebo.material</uri>
+            <name>Gazebo/Black</name>
+          </script>
+        </material>
+      </visual>
+    </link>
+    <link name="line_12">
+      <pose>0.0000 -0.4000 0.0005 0 0 0.0000</pose>
+      <visual name="v">
+        <geometry><box><size>0.2000 0.0150 0.0010</size></box></geometry>
+        <material>
+          <ambient>0 0 0 1</ambient>
+          <diffuse>0 0 0 1</diffuse>
+          <script>
+            <uri>file://media/materials/scripts/gazebo.material</uri>
+            <name>Gazebo/Black</name>
+          </script>
+        </material>
+      </visual>
+    </link>
+    <link name="line_13">
+      <pose>0.0000 -0.4000 0.0005 0 0 1.5708</pose>
+      <visual name="v">
+        <geometry><box><size>0.2000 0.0150 0.0010</size></box></geometry>
+        <material>
+          <ambient>0 0 0 1</ambient>
+          <diffuse>0 0 0 1</diffuse>
+          <script>
+            <uri>file://media/materials/scripts/gazebo.material</uri>
+            <name>Gazebo/Black</name>
+          </script>
+        </material>
+      </visual>
+    </link>
+    <link name="line_14">
+      <pose>0.2000 -0.4000 0.0005 0 0 0.0000</pose>
+      <visual name="v">
+        <geometry><box><size>0.2000 0.0150 0.0010</size></box></geometry>
+        <material>
+          <ambient>0 0 0 1</ambient>
+          <diffuse>0 0 0 1</diffuse>
+          <script>
+            <uri>file://media/materials/scripts/gazebo.material</uri>
+            <name>Gazebo/Black</name>
+          </script>
+        </material>
+      </visual>
+    </link>
+    <link name="line_15">
+      <pose>0.2000 -0.4000 0.0005 0 0 1.5708</pose>
+      <visual name="v">
+        <geometry><box><size>0.2000 0.0150 0.0010</size></box></geometry>
+        <material>
+          <ambient>0 0 0 1</ambient>
+          <diffuse>0 0 0 1</diffuse>
+          <script>
+            <uri>file://media/materials/scripts/gazebo.material</uri>
+            <name>Gazebo/Black</name>
+          </script>
+        </material>
+      </visual>
+    </link>
+    <link name="line_16">
+      <pose>0.4000 -0.4000 0.0005 0 0 0.0000</pose>
+      <visual name="v">
+        <geometry><box><size>0.2000 0.0150 0.0010</size></box></geometry>
+        <material>
+          <ambient>0 0 0 1</ambient>
+          <diffuse>0 0 0 1</diffuse>
+          <script>
+            <uri>file://media/materials/scripts/gazebo.material</uri>
+            <name>Gazebo/Black</name>
+          </script>
+        </material>
+      </visual>
+    </link>
+    <link name="line_17">
+      <pose>0.4000 -0.4000 0.0005 0 0 1.5708</pose>
       <visual name="v">
         <geometry><box><size>0.2000 0.0150 0.0010</size></box></geometry>
         <material>

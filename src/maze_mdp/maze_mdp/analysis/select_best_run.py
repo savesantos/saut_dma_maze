@@ -8,9 +8,7 @@ policy that maximizes mean return (tiebreak: fewer mean steps) is written
 to ``data/training/<algo>/<maze>/selected.json`` so downstream consumers
 (plots, RViz launches, deployment) all dereference a single source of truth.
 
-Example
--------
-::
+Example invocations::
 
     python -m maze_mdp.analysis.select_best_run --eval-episodes 200
     python -m maze_mdp.analysis.select_best_run --print qlearning fixture_7x7_loop

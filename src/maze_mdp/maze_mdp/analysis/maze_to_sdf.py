@@ -33,6 +33,7 @@ class MazeSpec:
 
     @classmethod
     def from_yaml(cls, path: Path) -> "MazeSpec":
+        """Load a :class:`MazeSpec` from a maze YAML file."""
         data = yaml.safe_load(path.read_text())
         layout = data["layout"]
         walkable = [[ch == "." for ch in row] for row in layout]
@@ -49,23 +50,23 @@ def _line_segments(maze: MazeSpec, cell_size: float) -> List[Tuple[float, float,
     """
     Return the list of black-tape segments as ``(cx, cy, length, yaw)``.
 
-    Each segment is the straight strip joining two adjacent walkable cells.
+    Each walkable cell hosts a full black cross: one horizontal strip and
+    one vertical strip of length ``cell_size`` centred on the cell. Adjacent
+    walkable cells therefore have strips that meet exactly at the shared
+    cell boundary, forming continuous lines; isolated cells and outer-edge
+    cells keep the dangling arms of the cross, matching the physical maze
+    tape pattern.
     """
     segs: List[Tuple[float, float, float, float]] = []
     for r in range(maze.rows):
         for c in range(maze.cols):
             if not maze.walkable[r][c]:
                 continue
-            # Horizontal segment to right neighbour.
-            if c + 1 < maze.cols and maze.walkable[r][c + 1]:
-                cx, cy = cell_center(r, c, cell_size)
-                nx, _ = cell_center(r, c + 1, cell_size)
-                segs.append(((cx + nx) / 2.0, cy, cell_size, 0.0))
-            # Vertical segment to bottom neighbour (row+1 -> -y direction).
-            if r + 1 < maze.rows and maze.walkable[r + 1][c]:
-                cx, cy = cell_center(r, c, cell_size)
-                _, ny = cell_center(r + 1, c, cell_size)
-                segs.append((cx, (cy + ny) / 2.0, cell_size, math.pi / 2))
+            cx, cy = cell_center(r, c, cell_size)
+            # Horizontal arm of the cross.
+            segs.append((cx, cy, cell_size, 0.0))
+            # Vertical arm of the cross.
+            segs.append((cx, cy, cell_size, math.pi / 2))
     return segs
 
 
@@ -75,7 +76,9 @@ def _segment_link_xml(idx: int, cx: float, cy: float, length: float, yaw: float,
         f'    <link name="line_{idx}">\n'
         f'      <pose>{cx:.4f} {cy:.4f} 0.0005 0 0 {yaw:.4f}</pose>\n'
         f'      <visual name="v">\n'
-        f'        <geometry><box><size>{length:.4f} {line_width:.4f} {line_height:.4f}</size></box></geometry>\n'
+        f'        <geometry><box>'
+        f'<size>{length:.4f} {line_width:.4f} {line_height:.4f}</size>'
+        f'</box></geometry>\n'
         f'        <material>\n'
         f'          <ambient>0 0 0 1</ambient>\n'
         f'          <diffuse>0 0 0 1</diffuse>\n'
@@ -138,7 +141,8 @@ def maze_to_sdf(maze: MazeSpec, cell_size: float = 0.20,
         f'  <world name="maze">\n'
         f'    <gui fullscreen="0">\n'
         f'      <camera name="user_camera">\n'
-        f'        <pose>{cam_x:.4f} {cam_y:.4f} {cam_z:.4f} 0 {cam_pitch:.4f} {cam_yaw:.4f}</pose>\n'
+        f'        <pose>{cam_x:.4f} {cam_y:.4f} {cam_z:.4f}'
+        f' 0 {cam_pitch:.4f} {cam_yaw:.4f}</pose>\n'
         f'      </camera>\n'
         f'    </gui>\n'
         f'\n'
@@ -160,12 +164,15 @@ def maze_to_sdf(maze: MazeSpec, cell_size: float = 0.20,
         f'      <static>true</static>\n'
         f'      <link name="link">\n'
         f'        <collision name="c">\n'
-        f'          <geometry><plane><normal>0 0 1</normal><size>{floor:.2f} {floor:.2f}</size></plane></geometry>\n'
-        f'          <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface>\n'
+        f'          <geometry><plane><normal>0 0 1</normal>'
+        f'<size>{floor:.2f} {floor:.2f}</size></plane></geometry>\n'
+        f'          <surface><friction><ode>'
+        f'<mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface>\n'
         f'        </collision>\n'
         f'        <visual name="v">\n'
         f'          <cast_shadows>false</cast_shadows>\n'
-        f'          <geometry><plane><normal>0 0 1</normal><size>{floor:.2f} {floor:.2f}</size></plane></geometry>\n'
+        f'          <geometry><plane><normal>0 0 1</normal>'
+        f'<size>{floor:.2f} {floor:.2f}</size></plane></geometry>\n'
         f'          <material>\n'
         f'            <ambient>1 1 1 1</ambient>\n'
         f'            <diffuse>1 1 1 1</diffuse>\n'

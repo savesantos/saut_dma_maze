@@ -1,4 +1,4 @@
-"""Comparative optimality plot: VI vs SARSA vs Q-Learning.
+r"""Comparative optimality plot: VI vs SARSA vs Q-Learning.
 
 For each policy we compute the **mean policy value over all reachable,
 non-terminal states** using closed-form policy evaluation
@@ -80,7 +80,7 @@ def _empirical_success(
     seed: int = _EVAL_SEED,
     mdp_config=None,
 ) -> float:
-    """Empirical success rate from random starts under the stochastic env.
+    r"""Empirical success rate from random starts under the stochastic env.
 
     Uses a fixed evaluation seed so every trained policy is scored against
     the *same* sequence of (start cell, slip noise) draws. With

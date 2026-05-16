@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import matplotlib.pyplot as plt
 import numpy as np
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 from maze_mdp.analysis import style
 from maze_mdp.analysis.loaders import load_training_runs, mdp_config_from_runs
@@ -81,7 +85,8 @@ def plot(input_dir: Path, output_dir: Path) -> None:
     # Pick the seed promoted by ``select_best_run`` so the heatmap matches
     # whatever ``compare_viz`` / deployment is running. Fall back to the
     # lowest seed only when no selection has been made yet.
-    def _pick(group: 'pd.DataFrame') -> 'pd.Series':  # type: ignore[name-defined]
+
+    def _pick(group: pd.DataFrame) -> pd.Series:
         algo = group['algo'].iloc[0]
         maze = group['maze'].iloc[0]
         record = load_selected(algo, maze, training_root=input_dir / 'training')

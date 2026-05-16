@@ -19,5 +19,8 @@ import pytest
 @pytest.mark.linter
 @pytest.mark.pep257
 def test_pep257():
-    rc = main(argv=['.', 'test'])
+    # D213 ("Multi-line docstring summary should start at the second line")
+    # conflicts with D212, which the ament convention already ignores.
+    # We follow the D212 style throughout the codebase, so also drop D213.
+    rc = main(argv=['.', 'test', '--add-ignore', 'D213'])
     assert rc == 0, 'Found code style errors / warnings'

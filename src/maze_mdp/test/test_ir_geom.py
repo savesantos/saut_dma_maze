@@ -46,9 +46,10 @@ def test_line_pose_centered_on_horizontal_segment():
 
 
 def test_line_pose_off_to_left_returns_positive_pose_when_facing_east():
-    """
-    Robot at (0.10, +0.02) heading East (line is at y=0, i.e. *to the right*
-    in robot frame). Sign convention: positive => line right.
+    """Robot at (0.10, +0.02) heading East should yield positive line pose.
+
+    Line is at y=0 (i.e. to the right in robot frame).
+    Sign convention: positive => line right.
     """
     _, segs = _open_3x3_segments()
     cfg = IRGeomConfig(cell_size=CS, line_capture_width=0.04)
@@ -77,7 +78,8 @@ def test_line_pose_clipped_to_unit():
 
 
 def test_line_pose_sign_invariant_to_driving_direction():
-    """
+    """Sign of line pose should not depend on heading direction.
+
     Driving West along the same segment with the line slightly to the
     *right* (in robot frame) must still yield a positive pose.
     """
@@ -97,7 +99,8 @@ def test_line_pose_sign_invariant_to_driving_direction():
 
 
 def test_perpendicular_crossing_fires_at_cell_center():
-    """
+    """Detector fires on perpendicular segments at the cell center.
+
     Robot heading East, sitting exactly at cell (1,1) center. There are
     vertical (N-S) segments to its north and south whose centerlines pass
     *through* (and end at) this point. With a non-zero intersection radius
