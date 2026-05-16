@@ -148,8 +148,10 @@
   <joint name="camera_joint" type="fixed">
     <parent link="base_link"/>
     <child link="camera_link"/>
-    <!-- 4 cm in front of the chassis centre, 6 cm above the wheel axle. -->
-    <origin xyz="0.040 0 0.060" rpy="0 0.10 0"/>
+    <!-- 4 cm in front of the chassis centre, 6 cm above the wheel axle.
+         Pitched 45 deg down (0.7854 rad) so the camera looks more at the
+         ground (line + fiducials) and less at the horizon. -->
+    <origin xyz="0.040 0 0.060" rpy="0 0.7854 0"/>
   </joint>
 
   <!-- REP-103 optical frame: z forward, x right, y down. -->
