@@ -25,7 +25,7 @@ See [AGENTS.md](../AGENTS.md) for full operational rules. The points below are t
 - Subscribes: `/alphabot2/cmd_vel` (`geometry_msgs/Twist`) — namespaced, **not** `/cmd_vel`.
 - Publishes: `/image/compressed` (`sensor_msgs/CompressedImage`), `/virtual_odometry` (`nav_msgs/Odometry`), `/line_sensors` (`std_msgs/Int16MultiArray`).
 - `ROS_DOMAIN_ID` is set per shell from the robot IP last octet (50–70). Never hardcode it.
-- Reference hardware drivers (provided by course staff, copies at repo root): `TRSensors (1).py` (5-channel IR read + calibration + `readLine()`), `Line_Follow (1).py` (PID line-follow demo). Treat them as the API contract for the hardware `ir_driver` node.
+- Reference hardware drivers (course staff, Waveshare AlphaBot2 wiki): `TRSensors.py` (5-channel IR read + calibration + `readLine()`), `Line_Follow.py` (PID line-follow demo). Treat them as the API contract for the hardware `ir_driver` node.
 
 ## Build / test workflow
 

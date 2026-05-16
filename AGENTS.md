@@ -13,7 +13,6 @@ ROS 2 Humble (Python 3.10, Ubuntu 22.04) colcon workspace implementing MDP-based
 ⚠️ Ask first:
 - Adding a new `console_scripts` entry, dependency in any `package.xml`, or new `.msg`/`.srv` (requires `colcon build` and possibly cross-package rebuilds).
 - Editing `src/maze_msgs/CMakeLists.txt` or `src/maze_msgs/package.xml` (touches the rosidl interface graph; consumers must declare `<depend>maze_msgs</depend>`).
-- Deleting or rewriting tutorial-prescribed file layout (`docs/tutorial.md` § 1.1).
 - Running anything against the physical AlphaBot2 (must be coordinated with the team and `ROS_DOMAIN_ID`).
 
 🚫 Never:
@@ -106,22 +105,23 @@ Other rules:
 
 - Subscribes: `/alphabot2/cmd_vel` (`geometry_msgs/Twist`).
 - Publishes: `/image/compressed` (`sensor_msgs/CompressedImage`), `/line_sensors` (`std_msgs/Int16MultiArray`, 5-channel TRSensors IR array), and (sim only) `/virtual_odometry` (`nav_msgs/Odometry`).
-- **IR array (Waveshare TRSensors, 5 downward reflectance channels)** is the primary sensor for line following and intersection detection — black lines on a white floor, high raw value = on line. Reference hardware code: `TRSensors (1).py`, `Line_Follow (1).py` at repo root (provided by course staff). A separate `line_pose_estimator` node converts raw `/line_sensors` to `/line_pose`, `/intersection`, `/line_lost` so the action executor has the same interface in sim and on hardware.
+- **IR array (Waveshare TRSensors, 5 downward reflectance channels)** is the primary sensor for line following and intersection detection — black lines on a white floor, high raw value = on line. Course-staff reference code (`TRSensors.py`, `Line_Follow.py`, available on the Waveshare AlphaBot2 wiki) is the API contract for the hardware `ir_driver` node. A separate `line_pose_estimator` node converts raw `/line_sensors` to `/line_pose`, `/intersection`, `/line_lost` so the action executor has the same interface in sim and on hardware.
 - Goal identification + cell-level localization is via **fiducial markers** (ArUco / AprilTag) on the camera stream — there is no laser scan to fall back on. The camera is also the fallback for line recovery if the IR array loses the line.
 - **Localization & mapping scope (professor, 2026-05):** any ROS 2 method is acceptable (fiducial markers, `robot_localization`, `slam_toolbox`, `nav2` AMCL, etc.). It is not a graded contribution of this project — pick whatever yields a reliable discrete cell estimate for the MDP and move on. Do not over-invest engineering effort here.
 - Bring-up on hardware (per `Lab_guide_2526.pdf`): SSH `deec@10.16.140.<id>`, then `ros2 launch alphabot2 alphabot2_launch.py` and in another SSH `ros2 run alphabot2 motion_driver`. On the laptop set `ROS_DOMAIN_ID=<id>` before `ros2 topic list`.
 
 ## Documentation Standards
 
-All documentation lives in `docs/` (`docs/tutorial.md` is the canonical onboarding guide; `README.md` is the only project-level doc allowed at the repo root alongside `AGENTS.md`, `CLAUDE.md`, `LICENSE` files in each package).
+All documentation lives in `docs/`. The only project-level docs allowed at the repo root are `README.md`, `AGENTS.md`, `CLAUDE.md`, and `LICENSE`.
 
 - ATX-style headers (`#`), one sentence per line.
-- Relative links between docs (e.g., `[tutorial](docs/tutorial.md)`).
-- KaTeX math (`$...$` inline, `$$...$$` block) — already used in `README.md`.
+- Relative links between docs (e.g., `[control](docs/control.md)`).
+- KaTeX math (`$...$` inline, `$$...$$` block).
 - Mermaid diagrams: neutral theme with accessible colors.
+
+Canonical doc set: `usage.md`, `mdp_design.md`, `control.md`, `data_schema.md`, `deployment.md`, `future_work.md`. Do not introduce new docs without trimming an existing one — the report has 6 pages.
 
 ## Additional Guidance
 
-- Package-by-package onboarding: see [docs/tutorial.md](docs/tutorial.md).
 - Course materials and constraints: `Lab_guide_2526.pdf`, `Projects_2526.pdf`, `Apresentação 1 SAut.pdf` at repo root.
 - Deliverables: 6-page IEEE report + code by **5 Jun 2026**; weekly progress presentations.

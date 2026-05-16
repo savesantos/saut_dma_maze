@@ -1,10 +1,7 @@
 # Autonomous Maze Solving with MDPs and Model-Free RL
 
-Autonomous maze solving with **MDPs** and **model-free Reinforcement Learning**, implemented in Python on top of **ROS 2**. Target platform: **AlphaBot2 with camera** (using fiducial markers to identify the goal and aid odometry-based localization).
-
-> **Scope note (per professor, 2026-05):** localization and mapping are *not* the focus of this project. Any ROS 2 method may be used — fiducial markers (ArUco / AprilTag), `robot_localization`, `slam_toolbox`, `nav2` AMCL, or any other off-the-shelf ROS 2 stack are all acceptable. The contribution of this work is the MDP / RL decision-making layer; localization is a means to an end.
-
-Project **DMA** (Decision Making) of the *Autonomous Systems* course (IST, 2025/26).
+ROS 2 Humble workspace solving a discrete maze on the **AlphaBot2 with camera** using **Value Iteration**, **SARSA**, and **Q-Learning**.
+Course project DMA, IST *Autonomous Systems* 2025/26.
 
 ## Team
 
@@ -15,126 +12,103 @@ Project **DMA** (Decision Making) of the *Autonomous Systems* course (IST, 2025/
 
 ## Problem
 
-Solve a maze with a mobile robot whose actions have **uncertain outcomes**. The maze is modeled as a **Markov Decision Process** $(S, A, p, R, \gamma)$ and the robot must follow a policy $\pi(a\,|\,s)$ that maximizes expected discounted return:
+The maze is modelled as a Markov Decision Process $(S, A, p, R, \gamma)$ with state $s = (r, c, \theta)$, three actions $\{\texttt{forward}, \texttt{turn\_left}, \texttt{turn\_right\}}$, stochastic transitions ($p_s = 0.1$ slip per side), and goal-only reward.
+The robot must follow $\pi(a\mid s)$ maximising
 
-$$V^\pi(s) = \mathbb{E}_\pi\!\left[\sum_{k=0}^{\infty}\gamma^k R_{t+k+1} \mid S_t = s\right]$$
+$$
+V^\pi(s) = \mathbb{E}_\pi\!\left[\sum_{k=0}^{\infty}\gamma^k R_{t+k+1} \mid S_t = s\right].
+$$
 
-Fiducial markers (camera) identify the goal cell and help localize the robot at the cell level. Any ROS 2 localization/mapping stack may be plugged in — the MDP only consumes a discrete cell estimate.
+Three solvers are implemented:
 
-## Algorithms
+| Method | Type | One-line summary |
+| --- | --- | --- |
+| Value Iteration | Model-based | Bellman optimality sweep — exact under known $P$, $R$. |
+| SARSA | Model-free, on-policy | TD update along the trajectory actually taken. |
+| Q-Learning | Model-free, off-policy | Bootstrapped greedy update — converges to $Q^\ast$. |
 
-| Method          | Type                   | Notes                                                        |
-| --------------- | ---------------------- | ------------------------------------------------------------ |
-| Value Iteration | Model-based            | Baseline; requires full transition model $p(s',r \mid s,a)$. |
-| SARSA           | Model-free, on-policy  | Conservative — learns value of the policy actually followed. |
-| Q-Learning      | Model-free, off-policy | Aggressive — converges to $Q^\ast$ regardless of exploration.|
+See [docs/mdp_design.md](docs/mdp_design.md) for the full specification.
 
-TD update used by SARSA / Q-Learning:
+## System architecture
 
-$$Q(s,a) \leftarrow Q(s,a) + \alpha\bigl[r + \gamma\, Q'(s',\cdot) - Q(s,a)\bigr]$$
+```mermaid
+flowchart LR
+    subgraph Offline
+        SIM[GridMaze<br/><i>micro-sim, ROS-free</i>] --> ALG{{Value Iteration<br/>SARSA / Q-Learning}}
+        ALG --> POLICY[(policy.npz)]
+    end
 
-## Workplan
+    subgraph Online["Online (Gazebo or AlphaBot2)"]
+        IRD[ir_driver<br/><i>sim or HW</i>] -->|/line_pose<br/>/intersection<br/>/line_lost| EX[action_executor<br/><i>FSM + line PID</i>]
+        FID[fiducial_localizer<br/><i>ArUco / AprilTag</i>] -->|/goal_marker_seen| EX
+        CT[cell_tracker] -->|/robot_cell| PR[policy_runner]
+        POLICY --> PR
+        PR -->|DiscreteActionGoal| EX
+        EX -->|/alphabot2/cmd_vel| BASE[diff-drive base]
+        EX -->|DiscreteActionResult| PR
+    end
+```
 
-1. Problem statement, literature readings, workplan.
-2. Design algorithms and choose state/action representations.
-3. Implement MDP + Value Iteration, SARSA and Q-Learning in a Python **micro-simulator** and validate on synthetic mazes.
-4. Integrate with **ROS 2** and test on the AlphaBot2 in a physical maze.
-5. Systematic experiments: multiple runs, multiple mazes, comparative analysis (Value Iteration vs SARSA vs Q-Learning).
-
-## Stack
-
-- **Ubuntu 22.04 LTS** with **ROS 2 Humble Hawksbill** (per the course lab guide)
-- Python 3, NumPy, Matplotlib
-- ROS 2 nodes for the AlphaBot2 driver + camera
-- ArUco / AprilTag markers for goal identification and coarse localization
-- Datasets recorded as `rosbag` files for repeatable evaluation
+The same closed-loop stack runs in Gazebo and on hardware; only the sensor producers differ.
+The control layer is documented in [docs/control.md](docs/control.md).
 
 ## Repository layout
 
-This repository is a standard [ROS 2 colcon workspace](https://docs.ros.org/en/humble/Tutorials/Beginner-Client-Libraries/Creating-A-Workspace/Creating-A-Workspace.html). All source lives under `src/`; `build/`, `install/` and `log/` are generated by `colcon` and git-ignored.
-
 ```
 saut_dma_maze/
-└── src/
-    ├── maze_mdp/        # ament_python — MDP, Value Iteration, SARSA, Q-Learning, micro-simulator
-    ├── maze_bringup/    # ament_python — launch files & config for the AlphaBot2 stack
-    └── maze_msgs/       # ament_cmake  — custom ROS 2 interfaces (msg/srv)
+├── src/
+│   ├── maze_mdp/        # MDP, RL algorithms, control FSM, ROS nodes, analysis
+│   ├── maze_bringup/    # Launch files + YAML (no logic)
+│   └── maze_msgs/       # Custom .msg / .srv (ament_cmake)
+├── data/                # Training + deployment artefacts (gitignored)
+├── docs/                # Design + deployment + control documentation
+└── scripts/             # One-shot helpers (figure generation, etc.)
 ```
 
-## Getting started
-
-### Prerequisites
-
-- Ubuntu 22.04 LTS
-- [ROS 2 Humble](https://docs.ros.org/en/humble/Installation.html) (`ros-humble-desktop`)
-- `python3-colcon-common-extensions`, `python3-rosdep`
-
-### First-time setup
+## Quick start
 
 ```bash
-# 1. Clone
-git clone <repo-url> saut_dma_maze
-cd saut_dma_maze
-
-# 2. Source the ROS 2 underlay
+# One-time setup
 source /opt/ros/humble/setup.bash
-
-# 3. Install package dependencies declared in each package.xml
-sudo rosdep init   # only the very first time, system-wide
-rosdep update
 rosdep install -i --from-path src --rosdistro humble -y
-
-# 4. Build the workspace
-colcon build --symlink-install
-
-# 5. Source the overlay (do this in every new shell that uses the workspace)
-source install/setup.bash
-```
-
-### Day-to-day development
-
-```bash
-# from the workspace root
-source /opt/ros/humble/setup.bash
-colcon build --symlink-install --packages-select maze_mdp   # build only what changed
-source install/setup.bash
-colcon test --packages-select maze_mdp && colcon test-result --verbose
-```
-
-`--symlink-install` lets you edit Python sources without rebuilding.
-
-### Writing code
-
-See [docs/tutorial.md](docs/tutorial.md) for a package-by-package tutorial:
-adding algorithms to `maze_mdp`, declaring custom interfaces in `maze_msgs`,
-and wiring nodes together with launch files in `maze_bringup`.
-
-## Reproducing the report
-
-From a fresh clone, four commands regenerate every figure in the report:
-
-```bash
-source /opt/ros/humble/setup.bash
 colcon build --symlink-install
 source install/setup.bash
 
-# 1. Run the full sweep (3 algos × 3 mazes × 5 seeds by default)
-ros2 run maze_mdp sweep --config src/maze_bringup/config/sweeps/default.yaml
+# Train all policies (3 algos × 3 mazes × 5 seeds)
+ros2 run maze_mdp sweep --config \
+  $(ros2 pkg prefix maze_bringup)/share/maze_bringup/config/sweeps/default.yaml
 
-# 2. Generate the three figures (requires pandas + matplotlib)
-pip install -r requirements.txt   # one-time, see requirements.txt
+# Replay a trained policy in Gazebo
+ros2 launch maze_bringup gazebo_maze.launch.py \
+  maze_name:=fixture_7x7_loop \
+  policy_path:=$PWD/data/training/vi/fixture_7x7_loop/<run_id>/policy.npz
+
+# Regenerate every report figure
 bash scripts/make_all_figures.sh
 ```
 
-Tweak [src/maze_bringup/config/sweeps/default.yaml](src/maze_bringup/config/sweeps/default.yaml) to scale the
-evaluation matrix without touching code.
+See [docs/usage.md](docs/usage.md) for RViz visualization, side-by-side algorithm comparison, headless variants, and hardware deployment.
 
-For hardware deployment runs, see [docs/deployment.md](docs/deployment.md);
-for the artifact layout, [docs/data_schema.md](docs/data_schema.md).
+## Documentation map
+
+| Document | Purpose |
+| --- | --- |
+| [docs/usage.md](docs/usage.md) | End-to-end recipes: build, train, RViz micro-sim, Gazebo, hardware. |
+| [docs/mdp_design.md](docs/mdp_design.md) | State / action / reward / hyperparameter specification. |
+| [docs/control.md](docs/control.md) | Action FSM, line-follow PID, sim-vs-hardware calibration. |
+| [docs/data_schema.md](docs/data_schema.md) | Persisted artefact layout for reproducibility. |
+| [docs/deployment.md](docs/deployment.md) | Hardware bring-up and recording protocol. |
+| [docs/future_work.md](docs/future_work.md) | Deferred items with rationale. |
+| [AGENTS.md](AGENTS.md) | Developer + AI-assistant conventions. |
+
+A short Gazebo demo (VI on `fixture_7x7_loop`) lives in [docs/media/](docs/media/).
 
 ## References
 
-- Sutton & Barto, *Reinforcement Learning: An Introduction*, chs. 3 and 6 (MIT Press, 2018).
-- Russell & Norvig, *Artificial Intelligence: A Modern Approach*, chs. 7, 8 and 10 (Pearson, 2009).
+- Sutton, R. S. & Barto, A. G. *Reinforcement Learning: An Introduction*, 2nd ed. MIT Press, 2018 — chs. 3, 6.
+- Russell, S. & Norvig, P. *Artificial Intelligence: A Modern Approach*, 4th ed. Pearson, 2020 — ch. 17.
 - Course materials: `Lab_guide_2526.pdf`, `Projects_2526.pdf`, `Apresentação 1 SAut.pdf`.
 
+## License
+
+Apache License 2.0 — see [LICENSE](LICENSE).

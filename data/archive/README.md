@@ -71,5 +71,4 @@ print(load_policy(sel['selected']['policy_path'])['pi'])
 ```
 
 Or replay it on the ROS-free simulator / inside RViz via the
-`policy_runner` and `compare_node` nodes documented in
-[docs/visualization.md](../../docs/visualization.md).
+`policy_runner` and `compare_node` nodes (see [README](../../README.md)).
