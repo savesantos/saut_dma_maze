@@ -1,0 +1,22 @@
+# Archived scenario: reward10_pessimistic_init_7x7_rooms.
+# Same "best config" as reward10_pessimistic_init_7x7_tuned (pessimistic Q
+# init + extended 7x7 schedule), but trained only on the new
+# fixture_7x7_rooms maze (the one mirroring the lab cardboard maze).
+algos: [vi, sarsa, qlearning]
+mazes:
+  - fixture_7x7_rooms
+seeds: [0, 1, 2, 3, 4]
+mdp_config:
+  gamma: 0.99
+  slip_prob: 0.1
+  goal_reward: 10.0
+td_config:
+  n_episodes: 80000
+  alpha0: 0.1
+  alpha_min: 0.001
+  alpha_tau: 50.0
+  epsilon0: 1.0
+  epsilon_min: 0.05
+  epsilon_anneal_frac: 0.8
+  q_init: pessimistic
+out: data

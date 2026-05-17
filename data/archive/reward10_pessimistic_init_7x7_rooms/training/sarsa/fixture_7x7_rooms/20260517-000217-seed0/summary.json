@@ -1,0 +1,10 @@
+{
+  "algo": "sarsa",
+  "maze": "fixture_7x7_rooms",
+  "seed": 0,
+  "run_id": "20260517-000217-seed0",
+  "run_dir": "data/training/sarsa/fixture_7x7_rooms/20260517-000217-seed0",
+  "episodes": 80000,
+  "final_return_mean_last50": -8.184000000000001,
+  "wall_clock_s": 640.8422618729996
+}

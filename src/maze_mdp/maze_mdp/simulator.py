@@ -190,10 +190,29 @@ def fixture_7x7_loop() -> Maze:
     )
 
 
+def fixture_7x7_rooms() -> Maze:
+    """7x7 maze mirroring the lab cardboard maze; goal at bottom-left."""
+    # Mixed walls / open corridors, three homotopy-distinct paths from the
+    # top-left region to the goal. Connected: every free cell reaches (6, 0).
+    return Maze.from_layout(
+        layout=[
+            '.....#.',
+            '##.#...',
+            '...#.#.',
+            '#.##.#.',
+            '.....#.',
+            '####...',
+            '.....#.',
+        ],
+        goal=(6, 0),
+    )
+
+
 FIXTURES = {
     'fixture_3x3': fixture_3x3,
     'fixture_5x5_corridor': fixture_5x5_corridor,
     'fixture_7x7_loop': fixture_7x7_loop,
+    'fixture_7x7_rooms': fixture_7x7_rooms,
 }
 
 
@@ -209,4 +228,5 @@ __all__ = [
     'fixture_3x3',
     'fixture_5x5_corridor',
     'fixture_7x7_loop',
+    'fixture_7x7_rooms',
 ]
