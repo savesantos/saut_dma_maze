@@ -107,6 +107,8 @@ def _spawn_and_nodes(context: LaunchContext, *args, **kwargs):
     start_heading = int(LaunchConfiguration('start_heading').perform(context))
     headless = LaunchConfiguration('headless').perform(context)
     policy_path = LaunchConfiguration('policy_path').perform(context)
+    mirror_hw = str(LaunchConfiguration('mirror_hw').perform(context)
+                    ).lower() in ('1', 'true', 'yes')
     if not policy_path:
         raise RuntimeError(
             'gazebo_maze.launch.py: policy_path:=<file.npz> is required')
@@ -171,6 +173,12 @@ def _spawn_and_nodes(context: LaunchContext, *args, **kwargs):
         parameters=[{
             'maze_path': maze_path,
             'cell_size': cell_size,
+            # Widen the intersection acceptance window so PID drift can
+            # still trigger cell-entry events. With the default 4 cm box,
+            # a few mm of lateral drift accumulated over a straight made
+            # the cell tracker skip intersections, leaving the symbolic
+            # state stuck while the robot kept driving forward.
+            'intersection_radius': cell_size * 0.5,  # 10 cm in a 20 cm cell
             # Generous marker proximity: policy emits DRIVE_UNTIL_MARKER as
             # soon as the agent is one cell from the goal, so we need to
             # see the marker from at least cell_size away. Disable facing
@@ -261,7 +269,73 @@ def _spawn_and_nodes(context: LaunchContext, *args, **kwargs):
         }],
     )
 
-    actions: List = [
+    # Hardware-mirror runner: replaces policy_runner + action_executor +
+    # cell_tracker with a single node that runs the same control logic as
+    # the Pi-side ``line_follow_policy.py`` (PID line follow, open-loop
+    # turns + camera alignment, local cell integration).
+    gazebo_policy_runner = Node(
+        package='maze_mdp',
+        executable='gazebo_policy_runner',
+        name='gazebo_policy_runner',
+        output='screen',
+        parameters=[{
+            'policy_path': policy_path,
+            'rows': rows,
+            'cols': cols,
+            'cell_size': cell_size,
+            'start_row': start_row,
+            'start_col': start_col,
+            'start_heading': start_heading,
+            # Line-follow PID (kp/kd derived in docs/control.md from the
+            # small-angle line-follower ODE for /line_pose in [-1,+1]).
+            'forward_speed': 0.10,
+            'kp': 1.2,
+            'kd': 1.0,
+            'ki': 0.0,
+            'omega_clamp': 2.5,
+            # Forward burst out of the intersection so the next /intersection
+            # event corresponds to the next cell, not a re-trigger of the
+            # current cross.
+            'forward_burst_s': 0.6,
+            # Open-loop turn: gazebo_ros_diff_drive reaches ~80% of the
+            # commanded omega in steady state, so to integrate pi/2 of
+            # yaw we drive turn_speed * turn_open_loop_s ~= pi/2 / 0.8.
+            'turn_speed': 1.5,
+            'turn_open_loop_s': 1.10,
+            # Camera-based alignment after each turn.
+            'camera_align': True,
+            'image_topic': '/image/raw',
+            'align_omega': 0.8,
+            'align_theta_tol_deg': 4.0,
+            'align_stable_frames': 3,
+            'align_timeout_s': 2.0,
+            'creep_speed': 0.06,
+            'creep_timeout_s': 2.0,
+            # Logging cadence for the god-view (truth) pose.
+            'god_log_period_s': 1.0,
+            'control_rate_hz': 30.0,
+            'exit_on_goal': True,
+        }],
+    )
+
+    if mirror_hw:
+        runner_node = gazebo_policy_runner
+        actions: List = [
+            spawn_launch,
+            maze_publisher,
+            ir_driver,
+            TimerAction(period=8.0, actions=[runner_node]),
+            RegisterEventHandler(
+                OnProcessExit(
+                    target_action=runner_node,
+                    on_exit=[EmitEvent(
+                        event=Shutdown(reason='gazebo_policy_runner finished'))],
+                )
+            ),
+        ]
+        return actions
+
+    actions = [
         spawn_launch,
         maze_publisher,
         ir_driver,
@@ -294,5 +368,12 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument('start_heading', default_value='1'),  # E
         DeclareLaunchArgument('cell_size', default_value='0.20'),
         DeclareLaunchArgument('headless', default_value='true'),
+        DeclareLaunchArgument(
+            'mirror_hw', default_value='true',
+            description=(
+                'If true (default), use gazebo_policy_runner which mirrors '
+                'the hardware control stack (PID + open-loop turns + camera '
+                'align). If false, use the legacy policy_runner + '
+                'action_executor + cell_tracker FSM.')),
         OpaqueFunction(function=_spawn_and_nodes),
     ])

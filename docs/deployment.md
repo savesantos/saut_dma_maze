@@ -22,6 +22,44 @@ ros2 launch alphabot2 alphabot2_launch.py     # in shell A
 ros2 run alphabot2 motion_driver              # in shell B
 ```
 
+### 2a. Standalone Pi-side policy runner (no ROS)
+
+For the cardboard maze setup we also support a ROS-free entry point that runs
+directly on the Raspberry Pi. It is the closed-loop replacement for the
+course-supplied `Line_Follow.py` demo: PID line-follower verbatim, but at
+each intersection it consults a precomputed `policy.npz` instead of a
+hardcoded list of actions, and **uses the camera to re-align with the new
+line after every turn** (no more open-loop forward bursts).
+
+Install once on the Pi:
+
+```bash
+sudo apt install python3-picamera2 python3-libcamera python3-numpy
+# (RPi.GPIO, rpi_ws281x, AlphaBot2, TRSensors come with the AlphaBot2 image.)
+```
+
+`scp` the script, the camera helper and the policy onto the bot, then:
+
+```bash
+scp src/maze_mdp/maze_mdp/hardware/line_follow_policy.py \
+    src/maze_mdp/maze_mdp/hardware/camera_align.py \
+    data/training/qlearning/hw_5x5/<run_id>/policy.npz \
+    pi@<robot>:~
+
+ssh pi@<robot>
+python3 line_follow_policy.py \
+    --policy policy.npz \
+    --rows 7 --cols 7 \
+    --row 0 --col 0 --heading 1 \
+    --goal-row 6 --goal-col 0
+```
+
+`--row / --col / --heading` set the initial cell (heading: `0=N, 1=E, 2=S,
+3=W`). Camera alignment is on by default; add `--no-camera-align` to fall
+back to the legacy open-loop turn behavior, or `--camera-align-debug
+/tmp/align_frames` to dump raw frames for offline tuning. See
+[control.md](control.md#post-turn-camera-alignment) for the algorithm.
+
 ## 3. Laptop side
 
 ```bash

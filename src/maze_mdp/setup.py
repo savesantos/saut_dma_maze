@@ -34,6 +34,7 @@ setup(
             'maze_publisher = maze_mdp.nodes.maze_publisher:main',
             'fiducial_localizer = maze_mdp.nodes.fiducial_localizer:main',
             'policy_runner = maze_mdp.nodes.policy_runner:main',
+            'gazebo_policy_runner = maze_mdp.nodes.gazebo_policy_runner:main',
             'action_executor = maze_mdp.nodes.action_executor:main',
             'ir_driver_sim = maze_mdp.nodes.ir_driver_sim:main',
             'ir_driver_gazebo = maze_mdp.nodes.ir_driver_gazebo:main',

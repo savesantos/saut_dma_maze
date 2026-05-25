@@ -161,3 +161,55 @@ cd src/maze_mdp && python3 -m pytest -q
 2. **Turn yaw target.** Command one TURN from a known heading, measure actual yaw change with a protractor or fiducial reference; scale `turn_target_yaw_rad` proportionally. Expected ≈ π/2.
 3. **PID.** Start from the sim values ($k_p = 1.2$, $k_d = 1.0$, $k_i = 0$). If oscillation appears, drop $k_p$ first; if steady-state drift remains, add $k_i \approx 0.05$. Re-check the $\zeta \approx 0.7$ relation: $k_d = 1.4\sqrt{W k_p / v}$.
 4. **Symmetry.** If left and right turns land asymmetrically, split `turn_target_yaw_rad` into per-side parameters.
+
+## 9. Post-turn camera alignment
+
+Used only by the ROS-free Pi-side runner in
+[src/maze_mdp/maze_mdp/hardware/line_follow_policy.py](../src/maze_mdp/maze_mdp/hardware/line_follow_policy.py),
+not by the ROS FSM in §2.
+
+The reference `Line_Follow.py` demo (and our first port of it) cleared the
+intersection after each `TURN_*` with a fixed open-loop
+`Ab.forward(); time.sleep(0.5)`.
+That is sensitive to:
+
+- Motor asymmetry → the 90° turn drifts a few degrees.
+- Battery sag → distance per `0.5 s` burst changes.
+- Cross-arm geometry → fixed time over-shoots on narrow crosses.
+
+We replace it with a two-phase camera+IR routine in
+[src/maze_mdp/maze_mdp/hardware/camera_align.py](../src/maze_mdp/maze_mdp/hardware/camera_align.py):
+
+1. **Phase A — rotate-in-place until aligned.** Grab a frame from the
+   Pi camera (`picamera2`, 320×240 to match the Gazebo URDF
+   `horizontal_fov = 1.0856` rad, pitched 45° down), crop a bottom-center ROI
+   (rows `0.55–0.95 H`, cols `0.20–0.80 W`) so the cross-arms have already
+   exited the frame, Otsu-threshold, take per-row column centroids of the
+   dark line, fit `col = m·row + b` by least squares. The angular error
+   `e_theta = atan(m) − theta_offset` (the offset compensates the 45° camera
+   pitch and any mounting bias) drives short pulses of `Ab.left()` /
+   `Ab.right()` at `PWM = 12` until `|e_theta| ≤ 4°` for three consecutive
+   frames or `align_timeout = 1.5 s` elapses.
+2. **Phase B — creep forward until IR re-acquires.** Drive forward at
+   `PWM = 15` and poll `TR.readLine()`; stop when the intersection condition
+   (all 5 channels `> 900`) is **false** AND at least one inner channel is on
+   the line (`> 600`). Hard timeout `1.0 s`.
+
+Outcomes are logged per turn (`ok` / `align_timeout` / `creep_timeout` /
+`no_camera`). On any failure mode we fall back to the legacy open-loop
+forward burst, so a missing camera or a degenerate frame never strands the
+robot.
+
+### Camera dependencies
+
+Install once on the Pi:
+
+```bash
+sudo apt install python3-picamera2 python3-libcamera python3-numpy
+```
+
+`picamera2` exposes the modern `libcamera` stack; OpenCV is **not** required
+(line extraction is pure numpy). The aligner is on by default and can be
+disabled with `--no-camera-align`. Pass `--camera-align-debug <dir>` to dump
+raw frames + per-frame `(e_theta, e_x)` estimates for offline tuning of
+`--image-center-col` and `--theta-offset`.
