@@ -260,33 +260,48 @@ time.sleep(3)
 Ab.forward()
 
 # Sensor 0 (leftmost IR channel) is physically damaged on this robot;
-# ignore it everywhere. We recompute the line position using only
-# channels 1..4 (weights 1000/2000/3000/4000, neutral center = 2500)
-# and require only those four to be saturated to call an intersection.
+# ignore it everywhere. The line-position estimate below is the same
+# weighted-average algorithm as ``TRSensor.readLine`` (see
+# AlphaBot2-Demo/.../TRSensors.py) but the loop skips index 0, so the
+# value range is 1000..4000 with a centered line at LINE_CENTER = 2500.
+# Intersections likewise only require channels 1..4 to be saturated.
 LINE_CENTER = 2500
 _LAST_POSITION = LINE_CENTER
+_USED_INDICES = (1, 2, 3, 4)
+_POS_MIN = _USED_INDICES[0] * 1000          # 1000
+_POS_MAX = _USED_INDICES[-1] * 1000         # 4000
 
 
-def read_line_ignoring_s0():
-    """Return (position, Sensors) using channels 1..4 only."""
+def read_line_ignoring_s0(white_line=0):
+    """Mirror ``TRSensor.readLine`` but skip the broken channel 0."""
     global _LAST_POSITION
-    _, Sensors = TR.readLine()
-    on_line = False
-    numer = 0
-    denom = 0
-    for i in (1, 2, 3, 4):
-        v = Sensors[i]
-        if v > 200:
-            on_line = True
-        numer += i * 1000 * v
-        denom += v
+    sensor_values = TR.readCalibrated()
+    avg = 0
+    total = 0
+    on_line = 0
+    for i in _USED_INDICES:
+        value = sensor_values[i]
+        if white_line:
+            value = 1000 - value
+        # keep track of whether we see the line at all
+        if value > 200:
+            on_line = 1
+        # only average in values above the noise threshold
+        if value > 50:
+            avg += value * (i * 1000)
+            total += value
+
     if not on_line:
-        # Bias toward last known side so the PID still recovers.
-        pos = 1000 if _LAST_POSITION < LINE_CENTER else 4000
+        # If it last read left of center, snap to the left extreme;
+        # otherwise to the right extreme. Matches the original logic.
+        if _LAST_POSITION < (_POS_MIN + _POS_MAX) / 2:
+            _LAST_POSITION = _POS_MIN
+        else:
+            _LAST_POSITION = _POS_MAX
     else:
-        pos = numer // denom if denom else LINE_CENTER
-    _LAST_POSITION = pos
-    return pos, Sensors
+        _LAST_POSITION = avg / total
+
+    return _LAST_POSITION, sensor_values
 
 
 while True:
