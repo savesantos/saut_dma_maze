@@ -109,6 +109,52 @@ maximum = 35
 integral = 0
 last_proportional = 0
 
+# Sensor 0 (leftmost channel of the TRSensor array) is damaged on our
+# unit and reports unreliable values. We ignore it everywhere:
+#   * weighted line-position average uses sensors 1..4 only, so the
+#     center of the line corresponds to a reading of
+#     ``LINE_CENTER = (1 + 4) / 2 * 1000 = 2500`` instead of the stock
+#     2000 (which assumes all 5 sensors).
+#   * intersection detection requires sensors 1..4 (not 0) to be
+#     saturated, since on a real cross the remaining four sensors are
+#     enough to span the perpendicular line.
+#   * line-lost recovery snaps to sensor 1 / sensor 4 instead of 0 / 4.
+LINE_CENTER = 2500
+LINE_LEFT_FALLBACK = 1000   # sensor 1 (leftmost reliable channel)
+LINE_RIGHT_FALLBACK = 4000  # sensor 4 (rightmost channel)
+
+
+def read_line_skip_s0(tr):
+    """Drop-in replacement for ``TR.readLine`` that ignores sensor 0.
+
+    Mirrors :py:meth:`TRSensor.readLine` from the Waveshare reference
+    driver but only sums weighted contributions from sensors 1..4, and
+    updates ``tr.last_value`` so the line-lost fallback uses the same
+    state machine the original code relies on.
+    """
+    sensor_values = tr.readCalibrated()
+    avg = 0
+    total = 0
+    on_line = 0
+    for i in range(1, tr.numSensors):
+        value = sensor_values[i]
+        if value > 200:
+            on_line = 1
+        if value > 50:
+            avg += value * (i * 1000)
+            total += value
+    if not on_line:
+        # Last seen left of new center -> snap to leftmost reliable
+        # sensor; otherwise snap to the rightmost. Matches the original
+        # split-at-midpoint behavior, just with the new midpoint.
+        if tr.last_value < LINE_CENTER:
+            tr.last_value = LINE_LEFT_FALLBACK
+        else:
+            tr.last_value = LINE_RIGHT_FALLBACK
+    else:
+        tr.last_value = avg / total
+    return tr.last_value, sensor_values
+
 
 # ---------------------------------------------------------------- motion primitives
 # Verbatim from the working Line_Follow2 reference.
@@ -200,6 +246,10 @@ for i in range(4):
 strip.show()
 
 TR = TRSensor()
+# Sensor 0 is damaged on this unit. Anchor last_value to the new midpoint
+# (LINE_CENTER = 2500, from averaging sensors 1..4 only) so the first
+# off-line snap in read_line_skip_s0 doesn't bias to the left fallback.
+TR.last_value = LINE_CENTER
 Ab = AlphaBot2()
 Ab.stop()
 print("Line follow + policy execution")
@@ -253,61 +303,25 @@ for i in range(0, 100):
         Ab.setPWMB(20)
     TR.calibrate()
 Ab.stop()
+# Sensor 0 is dead; force a safe (non-degenerate) calibration range so
+# TRSensor.readCalibrated() doesn't divide by zero on calibratedMax[0]
+# == calibratedMin[0]. The value itself is irrelevant because
+# read_line_skip_s0 ignores sensor 0.
+TR.calibratedMin[0] = 0
+TR.calibratedMax[0] = 1000
 print(TR.calibratedMin)
 print(TR.calibratedMax)
 
 time.sleep(3)
 Ab.forward()
 
-# Sensor 0 (leftmost IR channel) is physically damaged on this robot;
-# ignore it everywhere. The line-position estimate below is the same
-# weighted-average algorithm as ``TRSensor.readLine`` (see
-# AlphaBot2-Demo/.../TRSensors.py) but the loop skips index 0, so the
-# value range is 1000..4000 with a centered line at LINE_CENTER = 2500.
-# Intersections likewise only require channels 1..4 to be saturated.
-LINE_CENTER = 2000
-_LAST_POSITION = LINE_CENTER
-_USED_INDICES = (1, 2, 3, 4)
-_POS_MIN = _USED_INDICES[0] * 1000          # 1000
-_POS_MAX = _USED_INDICES[-1] * 1000         # 4000
-
-
-def read_line_ignoring_s0(white_line=0):
-    """Mirror ``TRSensor.readLine`` but skip the broken channel 0."""
-    global _LAST_POSITION
-    sensor_values = TR.readCalibrated()
-    avg = 0
-    total = 0
-    on_line = 0
-    for i in _USED_INDICES:
-        value = sensor_values[i]
-        if white_line:
-            value = 1000 - value
-        # keep track of whether we see the line at all
-        if value > 200:
-            on_line = 1
-        # only average in values above the noise threshold
-        if value > 50:
-            avg += value * (i * 1000)
-            total += value
-
-    if not on_line:
-        # If it last read left of center, snap to the left extreme;
-        # otherwise to the right extreme. Matches the original logic.
-        if _LAST_POSITION < (_POS_MIN + _POS_MAX) / 2:
-            _LAST_POSITION = _POS_MIN
-        else:
-            _LAST_POSITION = _POS_MAX
-    else:
-        _LAST_POSITION = avg / total
-
-    return _LAST_POSITION, sensor_values
-
-
 while True:
     try:
-        position, Sensors = read_line_ignoring_s0()
+        position, Sensors = read_line_skip_s0(TR)
 
+        # Intersection: all *reliable* channels (1..4) saturated on the
+        # black perpendicular line. Sensor 0 is excluded because it is
+        # damaged on this robot.
         intersection = (Sensors[1] > 900 and Sensors[2] > 900
                         and Sensors[3] > 900 and Sensors[4] > 900)
 
@@ -354,20 +368,22 @@ while True:
                 next_s = state_index(robot_row, robot_col, robot_heading)
                 if int(pi[next_s]) == FORWARD:
                     steps_taken += 1
-                    post_turn_motion()
-                    dr, dc = HEADING_DELTA[robot_heading]
-                    robot_row += dr
-                    robot_col += dc
+                    moved = post_turn_motion()
+                    if moved or aligner is None:
+                        dr, dc = HEADING_DELTA[robot_heading]
+                        robot_row += dr
+                        robot_col += dc
             elif action == TURN_LEFT:
                 turn_left()
                 robot_heading = (robot_heading - 1) % 4
                 next_s = state_index(robot_row, robot_col, robot_heading)
                 if int(pi[next_s]) == FORWARD:
                     steps_taken += 1
-                    post_turn_motion()
-                    dr, dc = HEADING_DELTA[robot_heading]
-                    robot_row += dr
-                    robot_col += dc
+                    moved = post_turn_motion()
+                    if moved or aligner is None:
+                        dr, dc = HEADING_DELTA[robot_heading]
+                        robot_row += dr
+                        robot_col += dc
             else:
                 print('Unknown action {}, stopping.'.format(action))
                 Ab.stop()
@@ -376,9 +392,17 @@ while True:
             for i in range(4):
                 strip.setPixelColor(i, Color(100, 0, 0))
             strip.show()
+
+            # The intersection branch executes blocking motion primitives
+            # (~0.5-1 s with the robot stopped). Stale integral / derivative
+            # state from before the primitive would inject a huge spurious
+            # PID kick on the first post-intersection tick.
+            integral = 0
+            last_proportional = 0
         else:
-            # PID line-following, verbatim from the reference but with the
-            # neutral center shifted to LINE_CENTER (sensor 0 ignored).
+            # PID line-following. Setpoint shifted to LINE_CENTER (2500)
+            # because we average sensors 1..4 only; everything else is
+            # verbatim from the reference.
             proportional = position - LINE_CENTER
             derivative = proportional - last_proportional
             integral += proportional
@@ -392,16 +416,15 @@ while True:
                 power_difference = maximum
             if power_difference < -maximum:
                 power_difference = -maximum
-            print(position, power_difference)
             if power_difference < 0:
                 Ab.setPWMA(0.5 * (maximum + power_difference))
                 Ab.setPWMB(0.5 * maximum)
             else:
                 Ab.setPWMA(0.5 * maximum)
                 Ab.setPWMB(0.5 * (maximum - power_difference))
-                for i in range(4):
-                    strip.setPixelColor(i, Color(0, 100, 0))
-                strip.show()
+            for i in range(4):
+                strip.setPixelColor(i, Color(0, 100, 0))
+            strip.show()
 
     except KeyboardInterrupt:
         Ab.stop()
