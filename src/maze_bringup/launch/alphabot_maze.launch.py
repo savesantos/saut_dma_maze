@@ -24,6 +24,9 @@ Launch arguments (all optional unless noted):
 - ``cell_size``      (default ``0.20`` m -- match the printed maze)
 - ``params_file``    (optional YAML overlay for shared params)
 - ``marker_map``     (default: per-maze YAML in config/markers/)
+- ``ir_driver_backend`` (``auto``/``hardware``/``external``; default ``auto``)
+    where ``external`` means the IR driver is started separately (e.g. on the
+    AlphaBot2 Raspberry Pi) and this launch will not spawn ``ir_driver_hardware``.
 """
 
 import math
@@ -37,6 +40,7 @@ from launch import LaunchContext, LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
     EmitEvent,
+    LogInfo,
     OpaqueFunction,
     RegisterEventHandler,
     TimerAction,
@@ -55,6 +59,24 @@ _HEADING_TO_YAW = {0: math.pi / 2,   # N
                    3: math.pi}       # W
 
 
+def _is_raspberry_pi() -> bool:
+    """Best-effort host check used by ``ir_driver_backend:=auto``.
+
+    The hardware IR node depends on ``RPi.GPIO``, which is typically
+    available only on the Raspberry Pi running the AlphaBot2 stack.
+    """
+    model_path = '/sys/firmware/devicetree/base/model'
+    try:
+        with open(model_path, 'r', encoding='utf-8', errors='ignore') as f:
+            model = f.read().lower()
+        if 'raspberry pi' in model:
+            return True
+    except OSError:
+        pass
+    machine = os.uname().machine.lower()
+    return machine.startswith('arm') or machine.startswith('aarch64')
+
+
 def _build_nodes(context: LaunchContext, *args, **kwargs):
     """Read the maze YAML, then emit the node graph."""
     bringup_share = get_package_share_directory('maze_bringup')
@@ -66,6 +88,7 @@ def _build_nodes(context: LaunchContext, *args, **kwargs):
     policy_path = LaunchConfiguration('policy_path').perform(context)
     params_file = LaunchConfiguration('params_file').perform(context)
     marker_map = LaunchConfiguration('marker_map').perform(context)
+    ir_driver_backend = LaunchConfiguration('ir_driver_backend').perform(context)
 
     if not policy_path:
         raise RuntimeError(
@@ -102,19 +125,36 @@ def _build_nodes(context: LaunchContext, *args, **kwargs):
         parameters=common_params + [{'maze_path': maze_path}],
     )
 
-    ir_driver = Node(
-        package='maze_mdp',
-        executable='ir_driver_hardware',
-        name='ir_driver_hardware',
-        output='screen',
-        parameters=common_params + [{
-            # Calibration sweep on startup. Override via params_file
-            # once the floor + lighting are characterised.
-            'calibration_seconds': 6.0,
-            # Sign convention is verified per-robot during first run.
-            'sensor_sign': 1,
-        }],
-    )
+    backend = str(ir_driver_backend).strip().lower()
+    if backend == 'auto':
+        backend = 'hardware' if _is_raspberry_pi() else 'external'
+
+    ir_driver_actions: List = []
+    if backend == 'hardware':
+        ir_driver_actions.append(
+            Node(
+                package='maze_mdp',
+                executable='ir_driver_hardware',
+                name='ir_driver_hardware',
+                output='screen',
+                parameters=common_params + [{
+                    # Calibration sweep on startup. Override via params_file
+                    # once the floor + lighting are characterised.
+                    'calibration_seconds': 6.0,
+                    # Sign convention is verified per-robot during first run.
+                    'sensor_sign': 1,
+                }],
+            )
+        )
+    elif backend == 'external':
+        ir_driver_actions.append(
+            LogInfo(msg=(
+                'alphabot_maze: ir_driver_backend=external, expecting '
+                '/line_pose from an externally launched IR driver.'))
+        )
+    else:
+        raise RuntimeError(
+            'Invalid ir_driver_backend. Use one of: auto, hardware, external')
 
     fiducial_localizer = Node(
         package='maze_mdp',
@@ -182,7 +222,7 @@ def _build_nodes(context: LaunchContext, *args, **kwargs):
     return [
         maze_publisher,
         fiducial_localizer,
-        ir_driver,
+        *ir_driver_actions,
         action_executor,
         cell_tracker,
         # Delay the policy so the IR calibration sweep completes and the
@@ -216,5 +256,6 @@ def generate_launch_description() -> LaunchDescription:
             default_value=(default_params
                            if os.path.exists(default_params) else '')),
         DeclareLaunchArgument('marker_map', default_value=''),
+        DeclareLaunchArgument('ir_driver_backend', default_value='auto'),
         OpaqueFunction(function=_build_nodes),
     ])
