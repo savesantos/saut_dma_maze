@@ -118,12 +118,18 @@ echo "Using policy: $latest_policy"
 
 remote_policy_dir="${ROBOT_WS}/shared/policies/${MAZE_NAME}/${ALGO}"
 remote_config_dir="${ROBOT_WS}/shared/bringup_config"
+remote_scripts_dir="${ROBOT_WS}/scripts"
 
-ssh "$ROBOT_HOST" "mkdir -p '${remote_policy_dir}' '${remote_config_dir}/mazes' '${remote_config_dir}/markers' '${remote_config_dir}/params'"
+ssh "$ROBOT_HOST" "mkdir -p '${remote_policy_dir}' '${remote_config_dir}/mazes' '${remote_config_dir}/markers' '${remote_config_dir}/params' '${remote_scripts_dir}'"
 
 rsync -av "$latest_policy" "${ROBOT_HOST}:${remote_policy_dir}/policy-seed${SEED}.npz"
 rsync -av "src/maze_bringup/config/mazes/${MAZE_NAME}.yaml" "${ROBOT_HOST}:${remote_config_dir}/mazes/${MAZE_NAME}.yaml"
 rsync -av "src/maze_bringup/config/params.yaml" "${ROBOT_HOST}:${remote_config_dir}/params/params.yaml"
+
+# Sync robot-side helper scripts so they can be run directly on AlphaBot.
+rsync -av "scripts/setup_alphabot.sh" "${ROBOT_HOST}:${remote_scripts_dir}/setup_alphabot.sh"
+rsync -av "scripts/run_alphabot_stack.sh" "${ROBOT_HOST}:${remote_scripts_dir}/run_alphabot_stack.sh"
+ssh "$ROBOT_HOST" "chmod +x '${remote_scripts_dir}/setup_alphabot.sh' '${remote_scripts_dir}/run_alphabot_stack.sh'"
 
 # The rooms marker map is optional in this repo. Sync it only if present.
 if [[ -f "src/maze_bringup/config/markers/${MAZE_NAME}.yaml" ]]; then
