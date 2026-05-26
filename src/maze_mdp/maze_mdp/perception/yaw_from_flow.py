@@ -37,6 +37,17 @@ class YawFromFlowConfig:
     (negative yaw under REP-103), so ``sign=-1.0`` yields positive
     deltas for CCW rotations.
 
+    ``gain`` scales the converted yaw to compensate for camera mount
+    geometry that violates the ideal forward-looking-pinhole assumption
+    (the bare ``width / HFOV`` conversion is exact only when the camera
+    optical axis is horizontal). For a camera pitched down by ``p``,
+    pure-yaw horizontal pixel shift is reduced roughly by ``cos(p)``
+    relative to a forward camera, so set ``gain = 1 / cos(p)`` to
+    recover the true yaw (for the URDF's 45 deg pitch that is ~1.414).
+    Defaults to 1.0 (no compensation). This is a per-mount property,
+    not a per-motor property, so the same value applies to every
+    robot built with the same hardware.
+
     ``min_pixels`` clamps sub-pixel shifts to zero (rejects
     floating-point noise from a static scene); ``max_pixels`` discards
     anything larger (rejects scene cuts, shutter glitches, frame drops).
@@ -44,6 +55,7 @@ class YawFromFlowConfig:
 
     camera_hfov_rad: float = math.radians(62.2)
     sign: float = -1.0
+    gain: float = 1.0
     min_pixels: float = 0.5
     max_pixels: float = 200.0
 
@@ -112,7 +124,7 @@ class YawFromFlow:
             return 0.0
 
         pix_per_rad = self._image_width / self._cfg.camera_hfov_rad
-        return self._cfg.sign * dx / pix_per_rad
+        return self._cfg.sign * self._cfg.gain * dx / pix_per_rad
 
 
 __all__ = ['YawFromFlow', 'YawFromFlowConfig']

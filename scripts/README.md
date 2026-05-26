@@ -127,3 +127,58 @@ When `policy_runner` reaches the goal, the launch shuts the whole graph down.
 
 - `scripts/make_all_figures.sh` — regenerate all report figures from `data/training/`.
 - `scripts/rerun_archive.sh` — replay an archived deployment rosbag.
+
+---
+
+## Test camera-yaw turn guidance in Gazebo (no robot)
+
+The simulated AlphaBot2 URDF has a forward-facing camera with the same HFOV (62.2°) as the real Pi Camera v2, so the exact same `yaw_estimator` pipeline runs in Gazebo. This is the fastest way to sanity-check the camera-based turn closure before going to the lab.
+
+```bash
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+
+# Train a small policy if you don't have one yet:
+ros2 run maze_mdp train --algo vi --maze fixture_3x3 --seed 0 --out data
+
+POLICY=$(ls -td data/training/vi/fixture_3x3/*-seed0/policy.npz | head -n 1)
+
+ros2 launch maze_bringup gazebo_maze.launch.py \
+  maze_name:=fixture_3x3 \
+  policy_path:=$PWD/$POLICY \
+  headless:=false
+```
+
+Verify the camera-yaw signal is flowing in a second shell:
+
+```bash
+ros2 topic hz /yaw_delta            # ~30 Hz once Gazebo is up
+ros2 topic echo /yaw_delta --once   # near 0 when still, spikes during turns
+```
+
+What changed for Gazebo: `turn_target_yaw_rad` is back to π/2 (geometric) — the previous 1.96 rad bias-correction (compensating for `gazebo_ros_diff_drive`'s 80 % omega tracking) is no longer needed because the executor now uses the measured camera yaw. If `/yaw_delta` stalls for > 0.3 s, the executor falls back to commanded-yaw integration automatically.
+
+### Tuning `gain` for the camera mount
+
+The bare `width / HFOV` pixel-to-radian conversion is exact only when the optical axis is horizontal. The simulated AlphaBot2 URDF (and likely the real one) mounts the camera pitched ~45° down so it sees the line and floor markers. That reduces horizontal pixel shift per radian of yaw, so we set `gain ≈ 1 / cos(pitch)`:
+
+- Forward camera (pitch = 0°): `gain = 1.0`
+- 45° down (default URDF): `gain ≈ 1.414` (already set in [gazebo_maze.launch.py](../src/maze_bringup/launch/gazebo_maze.launch.py))
+- 30° down: `gain ≈ 1.155`
+
+This is a **per-mount** property, identical across all robots with the same chassis — still motor-calibration agnostic.
+
+If turns are still off, measure the actual ratio with the calibrator (Gazebo only — uses commanded yaw as ground truth):
+
+```bash
+# Spawn the world with the calibrator instead of the policy stack:
+ros2 launch maze_bringup gazebo_maze.launch.py \
+  maze_name:=fixture_3x3 policy_path:=$PWD/$POLICY headless:=false &
+# Kill action_executor and policy_runner so they don't fight cmd_vel:
+ros2 lifecycle set /action_executor shutdown 2>/dev/null || \
+  pkill -f 'maze_mdp action_executor'
+ros2 run maze_mdp yaw_calibrator
+# Reads back: "recommended gain = commanded/measured = X.XXX"
+```
+
+Set that value as the `gain` parameter in the launch file and re-run.

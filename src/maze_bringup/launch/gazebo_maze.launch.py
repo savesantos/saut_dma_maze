@@ -181,6 +181,30 @@ def _spawn_and_nodes(context: LaunchContext, *args, **kwargs):
         }],
     )
 
+    # Camera-based yaw delta publisher. The URDF camera publishes
+    # /image/compressed at HFOV=1.0856 rad (62.2 deg, same as the real
+    # Pi Camera v2), so the same yaw_estimator config that runs on
+    # hardware also runs in Gazebo. This lets us test the
+    # motor-calibration agnostic turn closure end-to-end before going
+    # to the lab.
+    yaw_estimator = Node(
+        package='maze_mdp',
+        executable='yaw_estimator',
+        name='yaw_estimator',
+        output='screen',
+        parameters=[{
+            'camera_hfov_deg': 62.2,
+            'sign': -1.0,
+            # URDF camera is pitched 45 deg down (see alphabot2.urdf),
+            # which reduces horizontal pixel shift per radian of yaw by
+            # ~cos(45 deg). Compensate with gain = 1 / cos(45 deg).
+            'gain': 1.4142,
+            'min_pixels': 0.5,
+            'max_pixels': 200.0,
+            'downscale': 1.0,
+        }],
+    )
+
     action_executor = Node(
         package='maze_mdp',
         executable='action_executor',
@@ -224,12 +248,13 @@ def _spawn_and_nodes(context: LaunchContext, *args, **kwargs):
             'line_d_filter_tau': 0.04,
             'line_i_clamp': 0.5,
             'line_omega_clamp': 1.8,
-            # Sim-specific turn calibration: gazebo_ros_diff_drive reaches
-            # ~80% of commanded omega in steady state, so a commanded-yaw
-            # integral of pi/2 only rotates ~73 degrees. Bump the target.
-            # On real hardware this should be re-measured (likely closer
-            # to pi/2).
-            'turn_target_yaw_rad': 1.96,
+            # Camera-based yaw closure (yaw_estimator publishing
+            # /yaw_delta) supplies the measured rotation, so we no
+            # longer need the +25% bias correction that compensated for
+            # gazebo_ros_diff_drive's 80% omega tracking. Target is the
+            # geometric pi/2; the executor falls back to commanded
+            # integration if /yaw_delta stalls.
+            'turn_target_yaw_rad': math.pi / 2,
             'turn_max_yaw_rad': 2.80,
         }],
     )
@@ -265,6 +290,7 @@ def _spawn_and_nodes(context: LaunchContext, *args, **kwargs):
         spawn_launch,
         maze_publisher,
         ir_driver,
+        yaw_estimator,
         action_executor,
         cell_tracker,
         # Delay the policy so Gazebo has fully spawned the robot and

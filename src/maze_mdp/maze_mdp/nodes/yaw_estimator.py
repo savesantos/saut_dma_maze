@@ -44,6 +44,10 @@ class YawEstimatorNode(Node):
         # Sign convention: +1 if features shifting right means CCW.
         # Default -1 matches a forward-facing camera under REP-103.
         self.declare_parameter('sign', -1.0)
+        # Pitch / mount compensation. For a camera pitched down by p
+        # radians, set gain ~ 1 / cos(p) to recover true yaw from the
+        # horizontal pixel shift (the URDF's 45 deg pitch needs ~1.414).
+        self.declare_parameter('gain', 1.0)
         self.declare_parameter('min_pixels', 0.5)
         self.declare_parameter('max_pixels', 200.0)
         # Optional downscale for speed; 1.0 keeps the original size.
@@ -53,6 +57,7 @@ class YawEstimatorNode(Node):
             camera_hfov_rad=math.radians(
                 float(self.get_parameter('camera_hfov_deg').value)),
             sign=float(self.get_parameter('sign').value),
+            gain=float(self.get_parameter('gain').value),
             min_pixels=float(self.get_parameter('min_pixels').value),
             max_pixels=float(self.get_parameter('max_pixels').value),
         )
