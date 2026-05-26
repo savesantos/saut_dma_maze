@@ -259,13 +259,42 @@ print(TR.calibratedMax)
 time.sleep(3)
 Ab.forward()
 
+# Sensor 0 (leftmost IR channel) is physically damaged on this robot;
+# ignore it everywhere. We recompute the line position using only
+# channels 1..4 (weights 1000/2000/3000/4000, neutral center = 2500)
+# and require only those four to be saturated to call an intersection.
+LINE_CENTER = 2500
+_LAST_POSITION = LINE_CENTER
+
+
+def read_line_ignoring_s0():
+    """Return (position, Sensors) using channels 1..4 only."""
+    global _LAST_POSITION
+    _, Sensors = TR.readLine()
+    on_line = False
+    numer = 0
+    denom = 0
+    for i in (1, 2, 3, 4):
+        v = Sensors[i]
+        if v > 200:
+            on_line = True
+        numer += i * 1000 * v
+        denom += v
+    if not on_line:
+        # Bias toward last known side so the PID still recovers.
+        pos = 1000 if _LAST_POSITION < LINE_CENTER else 4000
+    else:
+        pos = numer // denom if denom else LINE_CENTER
+    _LAST_POSITION = pos
+    return pos, Sensors
+
+
 while True:
     try:
-        position, Sensors = TR.readLine()
+        position, Sensors = read_line_ignoring_s0()
 
-        intersection = (Sensors[0] > 900 and Sensors[1] > 900
-                        and Sensors[2] > 900 and Sensors[3] > 900
-                        and Sensors[4] > 900)
+        intersection = (Sensors[1] > 900 and Sensors[2] > 900
+                        and Sensors[3] > 900 and Sensors[4] > 900)
 
         if intersection:
             Ab.setPWMA(0)
@@ -333,8 +362,9 @@ while True:
                 strip.setPixelColor(i, Color(100, 0, 0))
             strip.show()
         else:
-            # PID line-following, verbatim from the reference.
-            proportional = position - 2000
+            # PID line-following, verbatim from the reference but with the
+            # neutral center shifted to LINE_CENTER (sensor 0 ignored).
+            proportional = position - LINE_CENTER
             derivative = proportional - last_proportional
             integral += proportional
             last_proportional = proportional
