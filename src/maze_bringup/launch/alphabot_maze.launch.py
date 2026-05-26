@@ -174,7 +174,7 @@ def _build_nodes(context: LaunchContext, *args, **kwargs):
             # commanded-yaw integral for a 90-degree turn must be
             # re-measured on the actual AlphaBot2. The defaults below
             # mirror the Gazebo launch and are the starting point.
-            'forward_speed': 0.10,
+            'forward_speed': 0.18,
             'turn_speed': 0.60,
             'control_rate_hz': 20.0,
             'action_timeout_s': 12.0,
