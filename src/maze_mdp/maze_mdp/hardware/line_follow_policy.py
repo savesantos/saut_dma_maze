@@ -265,7 +265,7 @@ Ab.forward()
 # AlphaBot2-Demo/.../TRSensors.py) but the loop skips index 0, so the
 # value range is 1000..4000 with a centered line at LINE_CENTER = 2500.
 # Intersections likewise only require channels 1..4 to be saturated.
-LINE_CENTER = 2500
+LINE_CENTER = 2000
 _LAST_POSITION = LINE_CENTER
 _USED_INDICES = (1, 2, 3, 4)
 _POS_MIN = _USED_INDICES[0] * 1000          # 1000
