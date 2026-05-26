@@ -392,13 +392,6 @@ while True:
             for i in range(4):
                 strip.setPixelColor(i, Color(100, 0, 0))
             strip.show()
-
-            # The intersection branch executes blocking motion primitives
-            # (~0.5-1 s with the robot stopped). Stale integral / derivative
-            # state from before the primitive would inject a huge spurious
-            # PID kick on the first post-intersection tick.
-            integral = 0
-            last_proportional = 0
         else:
             # PID line-following. Setpoint shifted to LINE_CENTER (2500)
             # because we average sensors 1..4 only; everything else is
@@ -416,15 +409,16 @@ while True:
                 power_difference = maximum
             if power_difference < -maximum:
                 power_difference = -maximum
+            print(position, power_difference)
             if power_difference < 0:
                 Ab.setPWMA(0.5 * (maximum + power_difference))
                 Ab.setPWMB(0.5 * maximum)
             else:
                 Ab.setPWMA(0.5 * maximum)
                 Ab.setPWMB(0.5 * (maximum - power_difference))
-            for i in range(4):
-                strip.setPixelColor(i, Color(0, 100, 0))
-            strip.show()
+                for i in range(4):
+                    strip.setPixelColor(i, Color(0, 100, 0))
+                strip.show()
 
     except KeyboardInterrupt:
         Ab.stop()
