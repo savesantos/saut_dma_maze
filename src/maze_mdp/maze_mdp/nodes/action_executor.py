@@ -6,6 +6,10 @@ Subscribes:
 - ``/line_pose``    (``std_msgs/Float32``): -1..+1, NaN if no line visible.
 - ``/intersection`` (``std_msgs/Empty``):   crossing detected (all sensors on).
 - ``/line_lost``    (``std_msgs/Empty``):   no line visible (optional hint).
+- ``/yaw_delta``    (``std_msgs/Float32``): per-frame yaw delta (rad) from
+  the camera-based estimator. Used to close the turn loop without
+  depending on motor calibration; falls back to commanded-yaw
+  integration if this topic is silent.
 - ``/goal_marker_seen`` (``std_msgs/Bool``): True when the goal fiducial is
   detected at final-approach proximity (only meaningful while executing
   ``DRIVE_UNTIL_MARKER``).
@@ -51,6 +55,7 @@ class ActionExecutorNode(Node):
         self.declare_parameter('intersection_topic', '/intersection')
         self.declare_parameter('line_lost_topic', '/line_lost')
         self.declare_parameter('marker_topic', '/goal_marker_seen')
+        self.declare_parameter('yaw_delta_topic', '/yaw_delta')
         self.declare_parameter('control_rate_hz', 20.0)
         self.declare_parameter('forward_speed', 0.10)
         self.declare_parameter('turn_speed', 0.60)
@@ -74,6 +79,7 @@ class ActionExecutorNode(Node):
         self.declare_parameter('turn_min_yaw_rad', 1.10)
         self.declare_parameter('turn_target_yaw_rad', 1.5708)
         self.declare_parameter('turn_max_yaw_rad', 2.50)
+        self.declare_parameter('yaw_measurement_stale_s', 0.3)
 
         cfg = ExecutorConfig(
             forward_speed=float(self.get_parameter('forward_speed').value),
@@ -109,6 +115,8 @@ class ActionExecutorNode(Node):
                 self.get_parameter('turn_target_yaw_rad').value),
             turn_max_yaw_rad=float(
                 self.get_parameter('turn_max_yaw_rad').value),
+            yaw_measurement_stale_s=float(
+                self.get_parameter('yaw_measurement_stale_s').value),
         )
         self._exec = ActionExecutor(cfg)
 
@@ -119,6 +127,7 @@ class ActionExecutorNode(Node):
         cross_topic = self.get_parameter('intersection_topic').value
         lost_topic = self.get_parameter('line_lost_topic').value
         marker_topic = self.get_parameter('marker_topic').value
+        yaw_topic = self.get_parameter('yaw_delta_topic').value
 
         self._cmd_pub = self.create_publisher(Twist, cmd_topic, 10)
         self._result_pub = self.create_publisher(
@@ -131,6 +140,8 @@ class ActionExecutorNode(Node):
         self.create_subscription(Empty, lost_topic, self._on_line_lost, 10)
         self.create_subscription(
             Bool, marker_topic, self._on_marker_seen, 10)
+        self.create_subscription(
+            Float32, yaw_topic, self._on_yaw_delta, 10)
 
         rate = float(self.get_parameter('control_rate_hz').value)
         self._tick_period = 1.0 / max(rate, 1e-3)
@@ -165,6 +176,12 @@ class ActionExecutorNode(Node):
             return
         cmd = self._exec.on_marker_seen()
         self._publish(cmd)
+        self._drain_result()
+
+    def _on_yaw_delta(self, msg: Float32) -> None:
+        cmd = self._exec.on_yaw_measurement(float(msg.data))
+        if self._exec.is_active:
+            self._publish(cmd)
         self._drain_result()
 
     # ---------------------------------------------------------------- tick

@@ -268,6 +268,71 @@ def test_unknown_action_raises():
 def test_idle_events_are_noops():
     e = _exec()
     assert e.on_tick(0.1).linear == 0 and e.on_tick(0.1).angular == 0
+
+
+# ------------------------------------------------------- camera-yaw closure
+def test_turn_succeeds_on_measured_yaw_alone():
+    """Camera-derived yaw deltas drive completion without commanded yaw."""
+    e = _exec(turn_target_yaw_rad=0.30,
+              turn_max_yaw_rad=10.0,
+              turn_min_yaw_rad=0.0,
+              action_timeout_s=10.0,
+              yaw_measurement_stale_s=1.0)
+    e.start(int(Action.TURN_LEFT), goal_id=42)
+    # Six measurements of 0.06 rad each -> 0.36 rad measured. The
+    # commanded-omega fallback is suppressed because measurements keep
+    # arriving, so success comes from the camera signal alone.
+    for _ in range(6):
+        e.on_yaw_measurement(0.06)
+        e.on_tick(0.02)
+    r = e.take_result()
+    assert r is not None and r.success and r.goal_id == 42
+    assert r.failure_mode == FailureMode.NONE
+
+
+def test_measured_yaw_disables_commanded_fallback():
+    """Without measurements, commanded integration would already trip.
+
+    With measurements arriving but summing well below target, the turn
+    must keep spinning instead of completing on a phantom commanded
+    integral.
+    """
+    e = _exec(turn_target_yaw_rad=0.30,
+              turn_max_yaw_rad=10.0,
+              turn_min_yaw_rad=0.0,
+              action_timeout_s=10.0,
+              yaw_measurement_stale_s=1.0)
+    e.start(int(Action.TURN_RIGHT), goal_id=7)
+    # 0.6 rad/s * 0.05 s * 12 ticks = 0.36 rad commanded -- enough on
+    # its own to satisfy the 0.30 rad target. But each tick a tiny
+    # measurement arrives (0.001 rad), keeping the camera path active
+    # and the open-loop integral disabled, so the executor must NOT
+    # have finished.
+    for _ in range(12):
+        e.on_yaw_measurement(0.001)
+        e.on_tick(0.05)
+    assert e.is_active
+    assert e.take_result() is None
+
+
+def test_measured_yaw_stale_falls_back_to_commanded():
+    """If the camera stream stops, commanded integration must resume."""
+    e = _exec(turn_target_yaw_rad=0.30,
+              turn_max_yaw_rad=10.0,
+              turn_min_yaw_rad=0.0,
+              action_timeout_s=10.0,
+              yaw_measurement_stale_s=0.10)
+    e.start(int(Action.TURN_LEFT), goal_id=9)
+    # One small measurement -> latches onto camera path.
+    e.on_yaw_measurement(0.001)
+    # No further measurements: after stale_s, the executor must fall
+    # back to commanded integration and complete the turn on the
+    # 0.6 rad/s commanded omega.
+    for _ in range(20):
+        e.on_tick(0.05)
+    r = e.take_result()
+    assert r is not None and r.success
+    assert r.failure_mode == FailureMode.NONE
     assert e.on_line_pose(0.5).linear == 0
     assert e.on_intersection().linear == 0
     assert e.take_result() is None

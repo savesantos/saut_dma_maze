@@ -164,6 +164,29 @@ def _build_nodes(context: LaunchContext, *args, **kwargs):
         parameters=common_params + [{'marker_map_path': marker_map}],
     )
 
+    # Camera-based yaw delta publisher. Replaces motor-calibration
+    # dependent open-loop turn timing with a closed-loop signal that is
+    # constant across robots (it depends only on the camera HFOV).
+    yaw_estimator = Node(
+        package='maze_mdp',
+        executable='yaw_estimator',
+        name='yaw_estimator',
+        output='screen',
+        parameters=common_params + [{
+            # Raspberry Pi Camera v2 wide module.
+            'camera_hfov_deg': 62.2,
+            # Forward-facing camera under REP-103: features shift right
+            # for CW (negative yaw), so sign=-1 makes deltas positive
+            # for CCW. Verify on the first run and override here if
+            # the camera is mounted rotated.
+            'sign': -1.0,
+            'min_pixels': 0.5,
+            'max_pixels': 200.0,
+            # Downscale to ~320x240 for cheap phase correlation.
+            'downscale': 0.5,
+        }],
+    )
+
     action_executor = Node(
         package='maze_mdp',
         executable='action_executor',
@@ -222,6 +245,7 @@ def _build_nodes(context: LaunchContext, *args, **kwargs):
     return [
         maze_publisher,
         fiducial_localizer,
+        yaw_estimator,
         *ir_driver_actions,
         action_executor,
         cell_tracker,

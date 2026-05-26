@@ -140,6 +140,14 @@ class ExecutorConfig:
     turn_target_yaw_rad: float = math.pi / 2  # exactly 90 degrees
     # Hard-fail the turn (LINE_LOST) once this much rotation has accumulated.
     turn_max_yaw_rad: float = 2.50   # well above turn_target_yaw_rad
+    # ---- Camera-based yaw measurement ----
+    # When ``on_yaw_measurement`` is called regularly, the executor
+    # switches from integrating commanded omega (open-loop, depends on
+    # per-robot motor calibration) to summing measured yaw deltas
+    # (closed-loop, motor-agnostic). If no measurement is seen for this
+    # long, the executor falls back to the commanded integral so a
+    # silent camera stream cannot stall a turn forever.
+    yaw_measurement_stale_s: float = 0.3
 
 
 class ActionExecutor:
@@ -167,7 +175,12 @@ class ActionExecutor:
         # Turn-specific bookkeeping.
         self._turn_phase: _TurnPhase = _TurnPhase.LEAVE
         self._turn_direction: int = 0  # -1 left (CCW), +1 right (CW)
-        self._yaw_accum: float = 0.0   # |integrated commanded omega|
+        # Accumulated |yaw| during the current turn. Sourced from camera
+        # measurements when available (see ``on_yaw_measurement``), with
+        # commanded-omega integration as a fallback in ``_turn_on_tick``.
+        self._yaw_accum: float = 0.0
+        self._yaw_measurement_active: bool = False
+        self._t_since_yaw_meas: float = 0.0
         self._lock_streak: int = 0
         self._leave_seen: bool = False  # safety: only LOCK after LEAVE
         # Most recent angular command emitted by the line-follow PID. Held
@@ -206,6 +219,8 @@ class ActionExecutor:
         self._t_last_pose = 0.0
         self._line_pid.reset()
         self._yaw_accum = 0.0
+        self._yaw_measurement_active = False
+        self._t_since_yaw_meas = 0.0
         self._lock_streak = 0
         self._leave_seen = False
         self._last_line_omega = 0.0
@@ -292,6 +307,25 @@ class ActionExecutor:
         # the goal cell may sit beyond one more intersection (APPROACHING),
         # we are already creeping past one (CROSSING), or the cross is
         # passing under the strip during the spin (TURNING).
+        return self._current_cmd()
+
+    def on_yaw_measurement(self, delta_rad: float) -> MotorCmd:
+        """Camera-derived yaw delta (radians) since the previous frame.
+
+        Drives the turn-completion accumulator from a motor-calibration
+        agnostic source. Only the magnitude is summed: the turn FSM only
+        cares about how much rotation has occurred, the *direction* is
+        already fixed by ``TURN_LEFT`` vs. ``TURN_RIGHT``.
+
+        Calling this method at least once during a turn latches the
+        executor onto the measured signal; the commanded-omega fallback
+        in ``_turn_on_tick`` is then disabled until the measurement
+        stream stalls for ``yaw_measurement_stale_s`` seconds.
+        """
+        self._t_since_yaw_meas = 0.0
+        if self._state == _State.TURNING:
+            self._yaw_accum += abs(float(delta_rad))
+            self._yaw_measurement_active = True
         return self._current_cmd()
 
     def on_marker_seen(self) -> MotorCmd:
@@ -403,12 +437,22 @@ class ActionExecutor:
         return self._turn_cmd()
 
     def _turn_on_tick(self, dt: float) -> MotorCmd:
-        # Integrate |commanded omega| only while actually spinning.
-        if self._turn_phase in (_TurnPhase.LEAVE, _TurnPhase.ACQUIRE):
-            self._yaw_accum += self._cfg.turn_speed * dt
-        elif self._turn_phase == _TurnPhase.LOCK:
-            self._yaw_accum += (
-                self._cfg.turn_speed * self._cfg.turn_lock_speed_factor * dt)
+        # Prefer the camera-derived yaw accumulator when available; only
+        # fall back to integrating commanded omega (open-loop, depends on
+        # motor calibration) if no measurement has been received for
+        # ``yaw_measurement_stale_s`` seconds.
+        if self._yaw_measurement_active:
+            self._t_since_yaw_meas += dt
+            if self._t_since_yaw_meas > self._cfg.yaw_measurement_stale_s:
+                self._yaw_measurement_active = False
+        if not self._yaw_measurement_active:
+            # Integrate |commanded omega| only while actually spinning.
+            if self._turn_phase in (_TurnPhase.LEAVE, _TurnPhase.ACQUIRE):
+                self._yaw_accum += self._cfg.turn_speed * dt
+            elif self._turn_phase == _TurnPhase.LOCK:
+                self._yaw_accum += (
+                    self._cfg.turn_speed
+                    * self._cfg.turn_lock_speed_factor * dt)
 
         # Primary completion: enough commanded rotation has accrued.
         if self._yaw_accum >= self._cfg.turn_target_yaw_rad:
