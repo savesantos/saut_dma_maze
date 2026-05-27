@@ -416,8 +416,16 @@ def main(args: Optional[list] = None) -> None:
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
+    except rclpy.executors.ExternalShutdownException:
+        # rclpy context was shut down from outside (e.g. SIGINT delivered to
+        # the whole process group, or a second instance of this node grabbed
+        # the same name). Treat as a normal exit.
+        pass
     finally:
-        node.destroy_node()
+        try:
+            node.destroy_node()
+        except Exception:  # noqa: BLE001
+            pass
         if rclpy.ok():
             rclpy.shutdown()
 
