@@ -8,15 +8,21 @@ Drives a differential-drive robot along a black-line grid:
   forward for ``pivot_creep_s`` so the wheel axle ends up over the crossing
   before stopping. This *centres* the robot on the cross before handing
   control to the next action.
-- ``TURN_LEFT`` / ``TURN_RIGHT``: 3-phase closed-loop spin
-  (``LEAVE`` -> ``ACQUIRE`` -> ``LOCK``) using the IR strip plus the
-  commanded-yaw integral as a sanity gate. Assumes the robot starts the turn
-  already centred on the crossing (FORWARD's post-intersection creep
-  guarantees that).
+- ``TURN_LEFT`` / ``TURN_RIGHT``: open-loop in-place spin at ``turn_speed``
+  until the forward camera reports a new line that is *almost parallel*
+  to the image vertical axis. The completion condition is purely
+  geometric: the originating line must first sweep away from vertical
+  (``|angle| > align_lost_threshold`` or NaN), then a new line must
+  return to within ``align_aligned_threshold`` of vertical for
+  ``align_debounce`` consecutive samples. ``turn_max_yaw_rad`` and the
+  global ``action_timeout_s`` are the only safety bounds. Assumes the
+  robot starts the turn already centred on the crossing (FORWARD's
+  post-intersection creep guarantees that).
 
 The executor is intentionally I/O-free: callers feed it events
-(``on_line_pose``, ``on_intersection``, ``on_line_lost``, ``on_tick``) and read
-back a :class:`MotorCmd` plus an optional :class:`ActionResult`.
+(``on_line_pose``, ``on_intersection``, ``on_line_lost``,
+``on_line_alignment``, ``on_tick``) and read back a :class:`MotorCmd`
+plus an optional :class:`ActionResult`.
 
 This keeps the algorithm trivially unit-testable with plain pytest and lets the
 same state machine drive both the hardware and the Gazebo wrapper.
@@ -24,7 +30,6 @@ same state machine drive both the hardware and the Gazebo wrapper.
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
@@ -40,12 +45,6 @@ class _State(Enum):
     TURNING = 'turning'
     APPROACHING = 'approaching'
     DONE = 'done'
-
-
-class _TurnPhase(Enum):
-    LEAVE = 'leave'        # spin until the strip leaves the originating line
-    ACQUIRE = 'acquire'    # spin until the perpendicular line is re-acquired
-    LOCK = 'lock'          # slow P-control until centred on the new line
 
 
 # DiscreteActionGoal.DRIVE_UNTIL_MARKER constant; kept here so the
@@ -115,39 +114,24 @@ class ExecutorConfig:
     # Calibrate per chassis as ``strip_to_axle_distance / forward_speed``.
     pivot_creep_s: float = 0.45
 
-    # ---- Turn FSM tuning ----
-    # LEAVE phase exit: ``|pose|`` past which the strip is considered to have
-    # left the originating line.
-    turn_leave_threshold: float = 0.5
-    # ACQUIRE -> LOCK gate: ``|pose|`` re-entering this window after having
-    # crossed ``turn_leave_threshold`` (and after enough yaw has accrued).
-    turn_acquire_threshold: float = 0.5
-    # LOCK phase: angular speed = this * ``turn_speed`` (slow creep).
-    turn_lock_speed_factor: float = 0.25
-    # LOCK exit: ``|pose|`` window for declaring the turn complete.
-    turn_lock_threshold: float = 0.15
-    # LOCK exit: number of consecutive samples below ``turn_lock_threshold``
-    # required before publishing success (debounce against IR noise).
-    turn_lock_debounce: int = 3
-    # Yaw-integral gates (using commanded omega only; cheap sanity bound):
-    # do not allow LOCK before this much rotation has accumulated.
-    turn_min_yaw_rad: float = 1.10   # ~0.7 * pi/2
-    # Primary turn completion criterion: succeed as soon as this much
-    # commanded rotation has accumulated, even if the IR strip has not
-    # locked on a perpendicular line. This is the most reliable signal in
-    # simulation (where /line_pose during a spin is synthetic) and a robust
-    # backstop on hardware.
-    turn_target_yaw_rad: float = math.pi / 2  # exactly 90 degrees
-    # Hard-fail the turn (LINE_LOST) once this much rotation has accumulated.
-    turn_max_yaw_rad: float = 2.50   # well above turn_target_yaw_rad
-    # ---- Camera-based yaw measurement ----
-    # When ``on_yaw_measurement`` is called regularly, the executor
-    # switches from integrating commanded omega (open-loop, depends on
-    # per-robot motor calibration) to summing measured yaw deltas
-    # (closed-loop, motor-agnostic). If no measurement is seen for this
-    # long, the executor falls back to the commanded integral so a
-    # silent camera stream cannot stall a turn forever.
-    yaw_measurement_stale_s: float = 0.3
+    # ---- Turn (open-loop spin, camera-based completion) ----
+    # The forward camera looking at the floor reports the angle (rad)
+    # of the dominant black line from image-vertical. The executor
+    # spins in place at ``turn_speed`` and finishes the turn as soon
+    # as a new line returns to near-vertical:
+    #   1. Originating line departs: a frame with ``|angle|`` greater
+    #      than ``align_lost_threshold`` (or NaN, meaning the line is
+    #      out of view) latches ``_align_lost_seen``. This is what
+    #      stops the FSM from accepting the originating line at t=0.
+    #   2. New line aligned: after departure, ``|angle|`` inside
+    #      ``align_aligned_threshold`` for ``align_debounce``
+    #      consecutive samples ends the turn successfully.
+    # ``turn_max_yaw_rad`` is the only commanded-yaw bound: if the
+    # robot spins past it without ever aligning, the turn fails.
+    align_lost_threshold: float = 0.5      # rad, ~28 deg
+    align_aligned_threshold: float = 0.15  # rad, ~8.6 deg
+    align_debounce: int = 3
+    turn_max_yaw_rad: float = 3.50         # hard safety bound
 
 
 class ActionExecutor:
@@ -172,17 +156,18 @@ class ActionExecutor:
             i_clamp=self._cfg.line_i_clamp,
             output_clamp=self._cfg.line_omega_clamp,
         ))
-        # Turn-specific bookkeeping.
-        self._turn_phase: _TurnPhase = _TurnPhase.LEAVE
+        # Turn bookkeeping (single-phase spin, camera-based completion).
         self._turn_direction: int = 0  # -1 left (CCW), +1 right (CW)
-        # Accumulated |yaw| during the current turn. Sourced from camera
-        # measurements when available (see ``on_yaw_measurement``), with
-        # commanded-omega integration as a fallback in ``_turn_on_tick``.
-        self._yaw_accum: float = 0.0
-        self._yaw_measurement_active: bool = False
-        self._t_since_yaw_meas: float = 0.0
-        self._lock_streak: int = 0
-        self._leave_seen: bool = False  # safety: only LOCK after LEAVE
+        self._yaw_accum: float = 0.0   # |integrated commanded omega|
+        # ``_align_lost_seen`` latches True once the originating line
+        # has swept out of the image-vertical reference (|angle| past
+        # ``align_lost_threshold`` or NaN). Until then, aligned frames
+        # are ignored -- they would otherwise immediately re-accept
+        # the originating line at t=0. ``_align_streak`` debounces
+        # the final acceptance; resets whenever the line drops out
+        # or moves back outside the aligned window.
+        self._align_lost_seen: bool = False
+        self._align_streak: int = 0
         # Most recent angular command emitted by the line-follow PID. Held
         # across brief NaN samples so a transient line drop-out does not
         # zero the correction in progress (the robot was already steering
@@ -219,10 +204,8 @@ class ActionExecutor:
         self._t_last_pose = 0.0
         self._line_pid.reset()
         self._yaw_accum = 0.0
-        self._yaw_measurement_active = False
-        self._t_since_yaw_meas = 0.0
-        self._lock_streak = 0
-        self._leave_seen = False
+        self._align_lost_seen = False
+        self._align_streak = 0
         self._last_line_omega = 0.0
         if self._action == int(Action.FORWARD):
             self._state = _State.DRIVING
@@ -230,12 +213,10 @@ class ActionExecutor:
         if self._action == int(Action.TURN_LEFT):
             self._state = _State.TURNING
             self._turn_direction = -1
-            self._turn_phase = _TurnPhase.LEAVE
             return self._turn_cmd()
         if self._action == int(Action.TURN_RIGHT):
             self._state = _State.TURNING
             self._turn_direction = +1
-            self._turn_phase = _TurnPhase.LEAVE
             return self._turn_cmd()
         if self._action == DRIVE_UNTIL_MARKER:
             self._state = _State.APPROACHING
@@ -280,7 +261,10 @@ class ActionExecutor:
             return MotorCmd(self._cfg.forward_speed, 0.0)
 
         if self._state == _State.TURNING:
-            return self._turn_on_pose(pose)
+            # Turn completion is driven entirely by the forward camera
+            # (``on_line_alignment``); the IR strip mid-spin is too
+            # noisy and ambiguous to be useful. Keep spinning.
+            return self._turn_cmd()
 
         if self._state == _State.APPROACHING:
             # Use the line-follow controller (with reduced speed) to stay
@@ -309,31 +293,84 @@ class ActionExecutor:
         # passing under the strip during the spin (TURNING).
         return self._current_cmd()
 
-    def on_yaw_measurement(self, delta_rad: float) -> MotorCmd:
-        """Camera-derived yaw delta (radians) since the previous frame.
-
-        Drives the turn-completion accumulator from a motor-calibration
-        agnostic source. Only the magnitude is summed: the turn FSM only
-        cares about how much rotation has occurred, the *direction* is
-        already fixed by ``TURN_LEFT`` vs. ``TURN_RIGHT``.
-
-        Calling this method at least once during a turn latches the
-        executor onto the measured signal; the commanded-omega fallback
-        in ``_turn_on_tick`` is then disabled until the measurement
-        stream stalls for ``yaw_measurement_stale_s`` seconds.
-        """
-        self._t_since_yaw_meas = 0.0
-        if self._state == _State.TURNING:
-            self._yaw_accum += abs(float(delta_rad))
-            self._yaw_measurement_active = True
-        return self._current_cmd()
-
     def on_marker_seen(self) -> MotorCmd:
         """Goal fiducial detected at final-approach proximity."""
         if self._state == _State.APPROACHING:
             self._finish(success=True, failure_mode=FailureMode.NONE)
             return STOP
         return self._current_cmd()
+
+    def on_line_x_offset(self, x_offset: float) -> MotorCmd:
+        """Accept the line-centroid x-offset for compatibility; ignored.
+
+        The simplified turn FSM uses only the line-tilt angle for
+        completion. Centroid x-offset is not consulted.
+        """
+        return self._current_cmd()
+
+    def on_line_alignment(self, angle: float) -> MotorCmd:
+        """Camera-derived line-tilt angle (radians) from image-vertical.
+
+        ``angle`` is the dominant ground-line tilt from image-vertical,
+        as published by ``line_aligner`` on ``/line_alignment``.
+        ``0`` means the line is vertical in the image (heading aligned).
+        ``NaN`` means no usable line is in view.
+
+        Active only during ``_State.TURNING``. The completion logic is
+        a single-stage debounce gated by one latch:
+
+          1. **Misaligned seen** (``_align_lost_seen``): latches True
+             on the first frame with ``|angle| > align_lost_threshold``
+             or a NaN. Without this latch, the originating line --
+             which is near-vertical at t=0 -- would immediately
+             satisfy the aligned predicate and the robot would never
+             turn.
+          2. **Aligned debounce**: once the misaligned latch is set,
+             ``align_debounce`` consecutive in-band samples with
+             ``|angle| <= align_aligned_threshold`` complete the turn.
+             An explicitly misaligned frame
+             (``|angle| > align_aligned_threshold``) resets the streak.
+             NaN is treated as a transient detector dropout and holds
+             the streak: a single missing frame between two aligned
+             frames does not penalise convergence.
+        """
+        if self._state != _State.TURNING:
+            return self._current_cmd()
+
+        is_nan = angle != angle
+        abs_a = abs(float(angle)) if not is_nan else 0.0
+
+        if is_nan:
+            # Transient detector dropout. Latch the misaligned flag if
+            # it has not been set yet (line out of view also counts as
+            # the originating line having swept away), but do not
+            # touch the debounce streak: a flicker between two aligned
+            # frames must not penalise convergence.
+            self._align_lost_seen = True
+            return self._turn_cmd()
+
+        if abs_a > self._cfg.align_lost_threshold:
+            # Originating line (or a new line still far from vertical):
+            # arm the FSM and reset the debounce streak.
+            self._align_lost_seen = True
+            self._align_streak = 0
+            return self._turn_cmd()
+
+        # Real measurement, |angle| within align_lost_threshold.
+        if not self._align_lost_seen:
+            # Still the originating line. Keep spinning.
+            return self._turn_cmd()
+
+        if abs_a > self._cfg.align_aligned_threshold:
+            # A new line is in view but not yet vertical enough.
+            self._align_streak = 0
+            return self._turn_cmd()
+
+        self._align_streak += 1
+        if self._align_streak >= self._cfg.align_debounce:
+            self._finish(success=True, failure_mode=FailureMode.NONE)
+            return STOP
+        return self._turn_cmd()
 
     def on_line_lost(self) -> MotorCmd:
         """Signal that no IR sensor currently sees a line."""
@@ -346,12 +383,8 @@ class ActionExecutor:
         if self._state == _State.APPROACHING:
             return MotorCmd(self._cfg.approach_speed, self._last_line_omega)
         if self._state == _State.TURNING:
-            # During LEAVE, losing the line is exactly the signal we are
-            # waiting for. Promote to ACQUIRE immediately so we do not wait
-            # for an unattainable |pose| threshold.
-            if self._turn_phase == _TurnPhase.LEAVE:
-                self._leave_seen = True
-                self._turn_phase = _TurnPhase.ACQUIRE
+            # Turn completion is camera-only; IR line loss during the
+            # spin is uninformative. Keep spinning.
             return self._turn_cmd()
         return self._current_cmd()
 
@@ -367,7 +400,9 @@ class ActionExecutor:
 
         if self._state == _State.DRIVING:
             self._t_since_line += dt
-            if self._t_since_line >= self._cfg.line_lost_timeout_s:
+            if (self._cfg.line_lost_timeout_s > 0.0
+                    and self._t_since_line
+                    >= self._cfg.line_lost_timeout_s):
                 self._finish(success=False,
                              failure_mode=FailureMode.LINE_LOST)
                 return STOP
@@ -392,75 +427,12 @@ class ActionExecutor:
         return self._current_cmd()
 
     # -------------------------------------------------------- turn helpers
-    def _turn_on_pose(self, pose: float) -> MotorCmd:
-        if self._turn_phase == _TurnPhase.LEAVE:
-            if pose != pose:  # NaN -> treat as line lost
-                self._leave_seen = True
-                self._turn_phase = _TurnPhase.ACQUIRE
-                return self._turn_cmd()
-            if abs(pose) >= self._cfg.turn_leave_threshold:
-                self._leave_seen = True
-                self._turn_phase = _TurnPhase.ACQUIRE
-            return self._turn_cmd()
-
-        if self._turn_phase == _TurnPhase.ACQUIRE:
-            if pose != pose:
-                return self._turn_cmd()
-            if not (self._leave_seen
-                    and abs(pose) <= self._cfg.turn_acquire_threshold
-                    and self._yaw_accum >= self._cfg.turn_min_yaw_rad):
-                return self._turn_cmd()
-            self._turn_phase = _TurnPhase.LOCK
-            self._lock_streak = 0
-            # Fall through to LOCK handling with this same sample.
-
-        if self._turn_phase == _TurnPhase.LOCK:
-            if pose != pose:
-                self._lock_streak = 0
-                return self._turn_cmd(lock=True)
-            if abs(pose) < self._cfg.turn_lock_threshold:
-                self._lock_streak += 1
-                if self._lock_streak >= self._cfg.turn_lock_debounce:
-                    self._finish(success=True,
-                                 failure_mode=FailureMode.NONE)
-                    return STOP
-            else:
-                self._lock_streak = 0
-            lock_w = self._cfg.turn_speed * self._cfg.turn_lock_speed_factor
-            ang = -self._cfg.line_p_gain * float(pose)
-            if ang > lock_w:
-                ang = lock_w
-            elif ang < -lock_w:
-                ang = -lock_w
-            return MotorCmd(0.0, ang)
-
-        return self._turn_cmd()
-
     def _turn_on_tick(self, dt: float) -> MotorCmd:
-        # Prefer the camera-derived yaw accumulator when available; only
-        # fall back to integrating commanded omega (open-loop, depends on
-        # motor calibration) if no measurement has been received for
-        # ``yaw_measurement_stale_s`` seconds.
-        if self._yaw_measurement_active:
-            self._t_since_yaw_meas += dt
-            if self._t_since_yaw_meas > self._cfg.yaw_measurement_stale_s:
-                self._yaw_measurement_active = False
-        if not self._yaw_measurement_active:
-            # Integrate |commanded omega| only while actually spinning.
-            if self._turn_phase in (_TurnPhase.LEAVE, _TurnPhase.ACQUIRE):
-                self._yaw_accum += self._cfg.turn_speed * dt
-            elif self._turn_phase == _TurnPhase.LOCK:
-                self._yaw_accum += (
-                    self._cfg.turn_speed
-                    * self._cfg.turn_lock_speed_factor * dt)
-
-        # Primary completion: enough commanded rotation has accrued.
-        if self._yaw_accum >= self._cfg.turn_target_yaw_rad:
-            self._finish(success=True, failure_mode=FailureMode.NONE)
-            return STOP
+        # Integrate commanded |omega| as a cheap safety bound.
+        self._yaw_accum += self._cfg.turn_speed * dt
 
         if self._yaw_accum >= self._cfg.turn_max_yaw_rad:
-            # Spun past the safety bound without locking on -> fail.
+            # Spun past the safety bound without ever aligning -> fail.
             self._finish(success=False, failure_mode=FailureMode.LINE_LOST)
             return STOP
 
@@ -469,12 +441,9 @@ class ActionExecutor:
             return STOP
         return self._turn_cmd()
 
-    def _turn_cmd(self, lock: bool = False) -> MotorCmd:
-        w = self._cfg.turn_speed
-        if lock or self._turn_phase == _TurnPhase.LOCK:
-            w *= self._cfg.turn_lock_speed_factor
+    def _turn_cmd(self) -> MotorCmd:
         # turn_direction: -1 left -> +omega; +1 right -> -omega.
-        return MotorCmd(0.0, -self._turn_direction * w)
+        return MotorCmd(0.0, -self._turn_direction * self._cfg.turn_speed)
 
     # ---------------------------------------------------------- internals
     def _line_pid_step(self, pose: float) -> float:

@@ -133,6 +133,14 @@ class PolicyRunner(Node):
         # Action-mode bookkeeping.
         self._goal_id: int = 0
         self._waiting_for_result: bool = False
+        # Pose snapshot at the moment we dispatched the current goal. Used
+        # to detect when /robot_cell has been updated by cell_tracker AFTER
+        # the action completed (vs. a 1 Hz heartbeat republish of the old
+        # pose while the action is still in flight).
+        self._cell_at_dispatch: tuple[int, int, int] | None = None
+        # Latched result of the in-flight action: None until /action_result
+        # for self._goal_id arrives.
+        self._last_result_success: bool | None = None
 
     # --------------------------------------------------------------- callbacks
     def _on_maze(self, msg: MazeGrid) -> None:
@@ -150,23 +158,48 @@ class PolicyRunner(Node):
         self._cell = (int(msg.row), int(msg.col), int(msg.heading))
         if self._state == _State.WAITING_CELL:
             self._transition(_State.RUNNING)
-        # In action mode, every cell update is a chance to dispatch the
-        # next action (the previous one has finished by definition).
         if self._mode == 'action' and self._state == _State.RUNNING:
-            self._maybe_dispatch_action()
+            self._try_advance()
 
     def _on_result(self, msg: DiscreteActionResult) -> None:
         if msg.goal_id != self._goal_id:
             return  # stale or other runner
-        self._waiting_for_result = False
+        self._last_result_success = bool(msg.success)
         if not msg.success:
             self.get_logger().warn(
                 f'action {self._goal_id} failed '
                 f'(failure_mode={msg.failure_mode})')
-        # Do NOT dispatch here: cell_tracker publishes the updated
-        # /robot_cell shortly after the result, and _on_cell handles
-        # dispatch. Dispatching now would race against the cell update
-        # and re-issue the just-finished action with stale pose.
+        # Try to advance now: on failure cell_tracker leaves the pose
+        # unchanged so we must dispatch off this callback; on success we
+        # may still be holding the pre-action /robot_cell (heartbeat), in
+        # which case _try_advance defers to the next _on_cell.
+        if self._state == _State.RUNNING:
+            self._try_advance()
+
+    def _try_advance(self) -> None:
+        """Clear ``_waiting_for_result`` and dispatch the next action.
+
+        Called from both ``_on_result`` and ``_on_cell``. Releases the
+        wait only once both:
+
+        - the ``DiscreteActionResult`` for the current ``_goal_id`` has
+          arrived (``_last_result_success`` is not ``None``); and
+        - either the action failed (cell never changes), or the
+          ``/robot_cell`` we currently hold differs from the snapshot
+          taken at dispatch time (so it reflects the post-action pose,
+          not a stale heartbeat).
+        """
+        if not self._waiting_for_result:
+            return
+        if self._last_result_success is None:
+            return
+        if (self._last_result_success
+                and self._cell == self._cell_at_dispatch):
+            return  # awaiting post-action cell update
+        self._waiting_for_result = False
+        self._last_result_success = None
+        self._cell_at_dispatch = None
+        self._maybe_dispatch_action()
 
     def _on_reset(self, _msg: Empty) -> None:
         """Restart the policy from whatever cell the sim resets us to."""
@@ -174,6 +207,8 @@ class PolicyRunner(Node):
             self._cmd_pub.publish(Twist())
         self.done = False
         self._waiting_for_result = False
+        self._cell_at_dispatch = None
+        self._last_result_success = None
         if self._timer.is_canceled():
             self._timer.reset()
         # Drop back into WAITING_CELL; the sim's post-reset CellPose will
@@ -246,6 +281,8 @@ class PolicyRunner(Node):
         msg.action = action
         self._goal_pub.publish(msg)
         self._waiting_for_result = True
+        self._cell_at_dispatch = (r, c, h)
+        self._last_result_success = None
         self.get_logger().info(
             f'dispatch goal_id={self._goal_id} action={action} '
             f'from cell=({r},{c},{h})')

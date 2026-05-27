@@ -1,7 +1,5 @@
 """Unit tests for the ROS-free executor state machine."""
 
-import math
-
 import pytest
 
 from maze_mdp.mdp import Action
@@ -20,17 +18,11 @@ def _exec(**overrides):
         line_p_gain=0.8,
         action_timeout_s=5.0,
         line_lost_timeout_s=0.5,
-        # Tiny creep / low yaw gate so a handful of ticks satisfies them.
+        # Tiny creep so a handful of ticks finishes FORWARD.
         pivot_creep_s=0.10,
-        turn_leave_threshold=0.5,
-        turn_acquire_threshold=0.5,
-        turn_lock_speed_factor=0.25,
-        turn_lock_threshold=0.15,
-        turn_lock_debounce=2,
-        turn_min_yaw_rad=0.30,
-        # Keep the target high in most tests so the pose-based exit still
-        # drives completion; one dedicated test exercises the target.
-        turn_target_yaw_rad=10.0,
+        align_lost_threshold=0.5,
+        align_aligned_threshold=0.15,
+        align_debounce=3,
         turn_max_yaw_rad=12.0,
     )
     defaults.update(overrides)
@@ -38,7 +30,7 @@ def _exec(**overrides):
 
 
 def _accumulate_yaw(e, dt=0.05, n=12):
-    """Tick ``n`` times of ``dt`` to satisfy ``turn_min_yaw_rad``."""
+    """Tick ``n`` times of ``dt`` to satisfy the turn yaw safety bound."""
     for _ in range(n):
         e.on_tick(dt)
 
@@ -126,12 +118,73 @@ def test_action_timeout_fires():
     assert r.failure_mode == FailureMode.TIMEOUT
 
 
-# --------------------------------------------------------------- TURN: start
+# ---------------------------------------------------------- TURN: completion
+def test_turn_finishes_when_new_line_returns_to_vertical():
+    """Originating line departs -> new aligned line arrives -> turn ends."""
+    e = _exec(align_debounce=3)
+    e.start(int(Action.TURN_LEFT), goal_id=9)
+    # Originating line tilts away (|angle| > align_lost_threshold).
+    e.on_line_alignment(0.9)
+    # New line arrives near vertical: needs ``align_debounce`` in a row.
+    e.on_line_alignment(0.05)
+    assert e.take_result() is None
+    e.on_line_alignment(0.05)
+    assert e.take_result() is None
+    e.on_line_alignment(0.05)
+    r = e.take_result()
+    assert r is not None and r.success and r.goal_id == 9
+    assert r.failure_mode == FailureMode.NONE
+    assert not e.is_active
+
+
+def test_turn_does_not_complete_without_departure():
+    """Aligned frames before the line has ever departed must not finish."""
+    e = _exec()
+    e.start(int(Action.TURN_LEFT), goal_id=1)
+    for _ in range(10):
+        e.on_line_alignment(0.0)
+        e.on_tick(0.05)
+    assert e.is_active
+    assert e.take_result() is None
+
+
+def test_turn_nan_alignment_counts_as_departure():
+    e = _exec(align_debounce=2)
+    e.start(int(Action.TURN_RIGHT), goal_id=2)
+    e.on_line_alignment(float('nan'))
+    e.on_line_alignment(0.05)
+    e.on_line_alignment(0.05)
+    r = e.take_result()
+    assert r is not None and r.success
+
+
+def test_turn_misaligned_resets_debounce_streak():
+    e = _exec(align_debounce=3)
+    e.start(int(Action.TURN_LEFT), goal_id=3)
+    e.on_line_alignment(0.9)        # depart
+    e.on_line_alignment(0.05)       # streak = 1
+    e.on_line_alignment(0.05)       # streak = 2
+    e.on_line_alignment(0.9)        # reset
+    e.on_line_alignment(0.05)       # streak = 1 again
+    e.on_line_alignment(0.05)       # streak = 2 again
+    assert e.is_active
+    assert e.take_result() is None
+
+
+def test_turn_ignores_line_pose():
+    """The IR strip must not be consulted during the spin."""
+    e = _exec()
+    e.start(int(Action.TURN_LEFT), goal_id=1)
+    # Feed IR pose right on the line; should keep spinning.
+    for _ in range(10):
+        e.on_line_pose(0.0)
+        e.on_tick(0.05)
+    assert e.is_active
+
+
 def test_turn_left_starts_spinning_immediately_ccw():
     e = _exec()
     cmd = e.start(int(Action.TURN_LEFT), goal_id=1)
-    # Assumes the preceding FORWARD already centred the robot on the cross,
-    # so TURN can spin in place from the first tick.
     assert cmd.linear == 0
     assert cmd.angular > 0  # CCW
     assert e.is_active
@@ -144,97 +197,14 @@ def test_turn_right_starts_spinning_immediately_cw():
     assert cmd.angular < 0
 
 
-# ---------------------------------------------------------- TURN: completion
-def test_turn_full_sequence_succeeds():
-    """LEAVE (excursion) -> ACQUIRE (return to band) -> LOCK (debounce)."""
-    e = _exec()
-    e.start(int(Action.TURN_LEFT), goal_id=9)
-    e.on_tick(0.05)
-    e.on_line_pose(0.8)               # LEAVE satisfied
-    _accumulate_yaw(e, dt=0.05, n=12)  # satisfy min-yaw gate
-    e.on_line_pose(0.1)               # first in-band sample
-    assert e.take_result() is None
-    e.on_line_pose(0.05)              # second in-band -> lock
-    r = e.take_result()
-    assert r is not None and r.success and r.goal_id == 9
-    assert r.failure_mode == FailureMode.NONE
-    assert not e.is_active
-
-
-def test_turn_does_not_lock_without_excursion():
-    e = _exec()
-    e.start(int(Action.TURN_LEFT), goal_id=1)
-    _accumulate_yaw(e, dt=0.05, n=12)
-    e.on_line_pose(0.05)
-    e.on_line_pose(0.05)
-    e.on_line_pose(0.05)
-    assert e.is_active
-    assert e.take_result() is None
-
-
-def test_turn_does_not_lock_before_min_yaw():
-    e = _exec(turn_min_yaw_rad=1.0)
-    e.start(int(Action.TURN_LEFT), goal_id=1)
-    e.on_tick(0.05)
-    e.on_line_pose(0.8)
-    e.on_tick(0.05)
-    e.on_line_pose(0.05)
-    e.on_line_pose(0.05)
-    assert e.is_active
-    assert e.take_result() is None
-
-
-def test_turn_handles_nan_line_pose_during_leave():
-    e = _exec()
-    e.start(int(Action.TURN_LEFT), goal_id=1)
-    e.on_tick(0.05)
-    cmd = e.on_line_pose(math.nan)
-    assert cmd.angular > 0
-    assert e.is_active
-    _accumulate_yaw(e, dt=0.05, n=12)
-    e.on_line_pose(0.05)
-    e.on_line_pose(0.05)
-    r = e.take_result()
-    assert r is not None and r.success
-
-
-def test_turn_line_lost_event_advances_leave_phase():
-    e = _exec()
-    e.start(int(Action.TURN_LEFT), goal_id=1)
-    e.on_tick(0.05)
-    e.on_line_lost()
-    _accumulate_yaw(e, dt=0.05, n=12)
-    e.on_line_pose(0.05)
-    e.on_line_pose(0.05)
-    r = e.take_result()
-    assert r is not None and r.success
-
-
 def test_turn_hard_fails_after_max_yaw():
-    e = _exec(turn_max_yaw_rad=0.30,
-              turn_min_yaw_rad=0.0,
-              turn_target_yaw_rad=10.0,
-              action_timeout_s=10.0)
+    e = _exec(turn_max_yaw_rad=0.30, action_timeout_s=10.0)
     e.start(int(Action.TURN_LEFT), goal_id=1)
     for _ in range(20):
         e.on_tick(0.05)
     r = e.take_result()
     assert r is not None and not r.success
     assert r.failure_mode == FailureMode.LINE_LOST
-
-
-def test_turn_succeeds_on_target_yaw_without_pose():
-    """Yaw-integral target alone is enough to declare success."""
-    e = _exec(turn_target_yaw_rad=0.30,
-              turn_max_yaw_rad=10.0,
-              action_timeout_s=10.0)
-    e.start(int(Action.TURN_RIGHT), goal_id=21)
-    # 12 ticks * 0.05 s * 0.6 rad/s = 0.36 rad > 0.30 target.
-    for _ in range(12):
-        e.on_tick(0.05)
-    r = e.take_result()
-    assert r is not None and r.success and r.goal_id == 21
-    assert r.failure_mode == FailureMode.NONE
 
 
 # ------------------------------------------------------------------- misc
@@ -268,71 +238,6 @@ def test_unknown_action_raises():
 def test_idle_events_are_noops():
     e = _exec()
     assert e.on_tick(0.1).linear == 0 and e.on_tick(0.1).angular == 0
-
-
-# ------------------------------------------------------- camera-yaw closure
-def test_turn_succeeds_on_measured_yaw_alone():
-    """Camera-derived yaw deltas drive completion without commanded yaw."""
-    e = _exec(turn_target_yaw_rad=0.30,
-              turn_max_yaw_rad=10.0,
-              turn_min_yaw_rad=0.0,
-              action_timeout_s=10.0,
-              yaw_measurement_stale_s=1.0)
-    e.start(int(Action.TURN_LEFT), goal_id=42)
-    # Six measurements of 0.06 rad each -> 0.36 rad measured. The
-    # commanded-omega fallback is suppressed because measurements keep
-    # arriving, so success comes from the camera signal alone.
-    for _ in range(6):
-        e.on_yaw_measurement(0.06)
-        e.on_tick(0.02)
-    r = e.take_result()
-    assert r is not None and r.success and r.goal_id == 42
-    assert r.failure_mode == FailureMode.NONE
-
-
-def test_measured_yaw_disables_commanded_fallback():
-    """Without measurements, commanded integration would already trip.
-
-    With measurements arriving but summing well below target, the turn
-    must keep spinning instead of completing on a phantom commanded
-    integral.
-    """
-    e = _exec(turn_target_yaw_rad=0.30,
-              turn_max_yaw_rad=10.0,
-              turn_min_yaw_rad=0.0,
-              action_timeout_s=10.0,
-              yaw_measurement_stale_s=1.0)
-    e.start(int(Action.TURN_RIGHT), goal_id=7)
-    # 0.6 rad/s * 0.05 s * 12 ticks = 0.36 rad commanded -- enough on
-    # its own to satisfy the 0.30 rad target. But each tick a tiny
-    # measurement arrives (0.001 rad), keeping the camera path active
-    # and the open-loop integral disabled, so the executor must NOT
-    # have finished.
-    for _ in range(12):
-        e.on_yaw_measurement(0.001)
-        e.on_tick(0.05)
-    assert e.is_active
-    assert e.take_result() is None
-
-
-def test_measured_yaw_stale_falls_back_to_commanded():
-    """If the camera stream stops, commanded integration must resume."""
-    e = _exec(turn_target_yaw_rad=0.30,
-              turn_max_yaw_rad=10.0,
-              turn_min_yaw_rad=0.0,
-              action_timeout_s=10.0,
-              yaw_measurement_stale_s=0.10)
-    e.start(int(Action.TURN_LEFT), goal_id=9)
-    # One small measurement -> latches onto camera path.
-    e.on_yaw_measurement(0.001)
-    # No further measurements: after stale_s, the executor must fall
-    # back to commanded integration and complete the turn on the
-    # 0.6 rad/s commanded omega.
-    for _ in range(20):
-        e.on_tick(0.05)
-    r = e.take_result()
-    assert r is not None and r.success
-    assert r.failure_mode == FailureMode.NONE
     assert e.on_line_pose(0.5).linear == 0
     assert e.on_intersection().linear == 0
     assert e.take_result() is None

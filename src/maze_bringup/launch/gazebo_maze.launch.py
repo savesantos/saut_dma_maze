@@ -181,27 +181,41 @@ def _spawn_and_nodes(context: LaunchContext, *args, **kwargs):
         }],
     )
 
-    # Camera-based yaw delta publisher. The URDF camera publishes
-    # /image/compressed at HFOV=1.0856 rad (62.2 deg, same as the real
-    # Pi Camera v2), so the same yaw_estimator config that runs on
-    # hardware also runs in Gazebo. This lets us test the
-    # motor-calibration agnostic turn closure end-to-end before going
-    # to the lab.
-    yaw_estimator = Node(
+    # Camera-based line-alignment publisher. The URDF camera looks at
+    # /image/compressed; this node fits the dominant black line in the
+    # lower half of each frame and emits its angle from
+    # image-vertical on /line_alignment. The executor uses this signal
+    # to close turns geometrically -- no motor calibration required.
+    line_aligner = Node(
         package='maze_mdp',
-        executable='yaw_estimator',
-        name='yaw_estimator',
+        executable='line_aligner',
+        name='line_aligner',
         output='screen',
         parameters=[{
-            'camera_hfov_deg': 62.2,
-            'sign': -1.0,
-            # URDF camera is pitched 45 deg down (see alphabot2.urdf),
-            # which reduces horizontal pixel shift per radian of yaw by
-            # ~cos(45 deg). Compensate with gain = 1 / cos(45 deg).
-            'gain': 1.4142,
-            'min_pixels': 0.5,
-            'max_pixels': 200.0,
+            # Gazebo's libgazebo_ros_camera.so publishes to
+            # /alphabot2_camera/image_raw/compressed, not /image/compressed,
+            # because the <remapping>~/image_raw:=...</remapping> tag in
+            # the URDF is silently ignored by this plugin. Subscribe to
+            # the actual topic name.
+            'image_topic': '/alphabot2_camera/image_raw/compressed',
+            'threshold': 80,        # black-on-white floor; Gazebo is high-contrast
+            # Use the full image: with the camera pitched 45 deg down,
+            # the corridor line ahead of the robot spans top-to-bottom.
+            # Cropping the top would discard exactly the part we need
+            # to lock on during a turn.
+            'roi_top': 0.0,
+            'min_pixels': 80,
+            # Eigenvalue-ratio gate: drop ambiguous frames at the dead
+            # centre of an X intersection (two equal lines visible) so
+            # the executor does not lock on a spurious mid-turn angle.
+            # After erosion the surviving arms are clean lines with
+            # high linearity, so the gate can stay relatively strict.
+            'min_linearity': 0.6,
+            # Erode the binary mask before findContours to pinch off
+            # the + at intersections. ~half the on-image line width.
+            'erode_kernel': 9,
             'downscale': 1.0,
+            'publish_period_s': 0.05,  # ~20 Hz
         }],
     )
 
@@ -212,9 +226,15 @@ def _spawn_and_nodes(context: LaunchContext, *args, **kwargs):
         output='screen',
         parameters=[{
             'forward_speed': 0.10,
-            'turn_speed': 0.60,
+            'turn_speed': 0.35,
             'control_rate_hz': 20.0,
-            'action_timeout_s': 12.0,
+            'action_timeout_s': 30.0,
+            # 0 = disabled. The FORWARD line-follow PID keeps the
+            # last correction across line-lost samples, and a turn
+            # always finishes with VERIFY_LINE guaranteeing the IR
+            # strip is on the line. There is no scenario where
+            # failing FORWARD on line-loss would help.
+            'line_lost_timeout_s': 0.0,
             # Line-follow PID, derived from the small-angle line-follower
             # ODE so the same gains transfer to the AlphaBot2 with only a
             # touch-up of ki if needed.
@@ -248,14 +268,17 @@ def _spawn_and_nodes(context: LaunchContext, *args, **kwargs):
             'line_d_filter_tau': 0.04,
             'line_i_clamp': 0.5,
             'line_omega_clamp': 1.8,
-            # Camera-based yaw closure (yaw_estimator publishing
-            # /yaw_delta) supplies the measured rotation, so we no
-            # longer need the +25% bias correction that compensated for
-            # gazebo_ros_diff_drive's 80% omega tracking. Target is the
-            # geometric pi/2; the executor falls back to commanded
-            # integration if /yaw_delta stalls.
-            'turn_target_yaw_rad': math.pi / 2,
-            'turn_max_yaw_rad': 2.80,
+            # Turn (open-loop spin, camera-based completion).
+            # Spin in place at ``turn_speed`` until the forward camera
+            # reports a new line within ``align_aligned_threshold`` of
+            # image-vertical for ``align_debounce`` samples (after the
+            # originating line has first swept past
+            # ``align_lost_threshold``). ``turn_max_yaw_rad`` is the
+            # only commanded-yaw bound (safety; ~140 deg).
+            'turn_max_yaw_rad': 4.50,
+            'align_lost_threshold': 0.5,    # rad, ~28 deg
+            'align_aligned_threshold': 0.15,  # rad, ~8.6 deg
+            'align_debounce': 2,
         }],
     )
 
@@ -290,7 +313,7 @@ def _spawn_and_nodes(context: LaunchContext, *args, **kwargs):
         spawn_launch,
         maze_publisher,
         ir_driver,
-        yaw_estimator,
+        line_aligner,
         action_executor,
         cell_tracker,
         # Delay the policy so Gazebo has fully spawned the robot and

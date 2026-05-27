@@ -33,8 +33,7 @@ setup(
         'console_scripts': [
             'maze_publisher = maze_mdp.nodes.maze_publisher:main',
             'fiducial_localizer = maze_mdp.nodes.fiducial_localizer:main',
-            'yaw_estimator = maze_mdp.nodes.yaw_estimator:main',
-            'yaw_calibrator = maze_mdp.nodes.yaw_calibrator:main',
+            'line_aligner = maze_mdp.nodes.line_aligner:main',
             'policy_runner = maze_mdp.nodes.policy_runner:main',
             'action_executor = maze_mdp.nodes.action_executor:main',
             'ir_driver_sim = maze_mdp.nodes.ir_driver_sim:main',

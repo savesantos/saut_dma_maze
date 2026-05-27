@@ -164,26 +164,32 @@ def _build_nodes(context: LaunchContext, *args, **kwargs):
         parameters=common_params + [{'marker_map_path': marker_map}],
     )
 
-    # Camera-based yaw delta publisher. Replaces motor-calibration
-    # dependent open-loop turn timing with a closed-loop signal that is
-    # constant across robots (it depends only on the camera HFOV).
-    yaw_estimator = Node(
+    # Camera-based line-alignment publisher. Fits the dominant black
+    # line in the lower half of each camera frame and emits its angle
+    # from image-vertical on /line_alignment. The executor uses this
+    # signal to close turns geometrically, so completion is
+    # independent of motor calibration (battery state, gear wear,
+    # wheel slip) across the fleet of lab robots.
+    line_aligner = Node(
         package='maze_mdp',
-        executable='yaw_estimator',
-        name='yaw_estimator',
+        executable='line_aligner',
+        name='line_aligner',
         output='screen',
         parameters=common_params + [{
-            # Raspberry Pi Camera v2 wide module.
-            'camera_hfov_deg': 62.2,
-            # Forward-facing camera under REP-103: features shift right
-            # for CW (negative yaw), so sign=-1 makes deltas positive
-            # for CCW. Verify on the first run and override here if
-            # the camera is mounted rotated.
-            'sign': -1.0,
-            'min_pixels': 0.5,
-            'max_pixels': 200.0,
-            # Downscale to ~320x240 for cheap phase correlation.
-            'downscale': 0.5,
+            # Real lab lighting is variable; -1 enables Otsu's method.
+            # Switch to a fixed value (e.g. 80) if Otsu trips on shadows.
+            'threshold': -1,
+            # Use the full image: at 90 deg through an intersection
+            # the new line (long vertical stretch) dominates over the
+            # old line right under the chassis (short horizontal
+            # stripe). A bottom-half ROI miss-fires at 180 deg.
+            'roi_top': 0.0,
+            'min_pixels': 200,
+            # Eigenvalue-ratio gate against ambiguous X-intersection
+            # frames where PCA flips between the two lines.
+            'min_linearity': 0.7,
+            'downscale': 1.0,
+            'publish_period_s': 0.05,
         }],
     )
 
@@ -207,11 +213,14 @@ def _build_nodes(context: LaunchContext, *args, **kwargs):
             'line_d_filter_tau': 0.04,
             'line_i_clamp': 0.5,
             'line_omega_clamp': 1.8,
-            # Real motors typically need a turn integral closer to
-            # pi/2 than the Gazebo bias-corrected 1.96 rad. Tune on
-            # the robot; this is the starting value.
-            'turn_target_yaw_rad': math.pi / 2,
-            'turn_max_yaw_rad': 2.80,
+            # Camera line-alignment is the only turn-completion
+            # signal: spin in place at ``turn_speed`` until the
+            # forward camera reports a new line near image-vertical.
+            # ``turn_max_yaw_rad`` is a safety bound only.
+            'turn_max_yaw_rad': 3.50,
+            'align_lost_threshold': 0.5,
+            'align_aligned_threshold': 0.15,
+            'align_debounce': 3,
         }],
     )
 
@@ -245,7 +254,7 @@ def _build_nodes(context: LaunchContext, *args, **kwargs):
     return [
         maze_publisher,
         fiducial_localizer,
-        yaw_estimator,
+        line_aligner,
         *ir_driver_actions,
         action_executor,
         cell_tracker,
