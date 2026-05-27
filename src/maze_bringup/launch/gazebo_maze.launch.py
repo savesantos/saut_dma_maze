@@ -247,27 +247,29 @@ def _spawn_and_nodes(context: LaunchContext, *args, **kwargs):
             #   omega_n = sqrt(v * kp / W)
             #   zeta    = (kd/2) * sqrt(v / (W * kp))
             #
-            # Target a well-damped response (zeta ~= 0.7) so the robot
-            # rejects post-turn heading bias and small motor asymmetry
-            # without zig-zag and without monotonic drift off the line:
-            #   kp = 1.2 -> omega_n ~= 1.73 rad/s (settles in ~1.6 s)
-            #   kd = 1.0 -> zeta ~= 0.72
-            # The previous (kp=1.0, kd=0.10) was zeta ~= 0.08, essentially
-            # undamped: any heading bias walked the robot off the line
-            # before P could pull it back, and at small |pose| the
-            # restoring force was too weak (1 cm offset -> only 0.25 rad/s
-            # -> 40 cm turning radius, two cells per correction cycle).
+            # Tuned for a fast, well-damped response (zeta ~= 0.7) so
+            # the robot snaps back onto the line after a turn without
+            # zig-zag overshoot:
+            #   kp = 2.4 -> omega_n ~= 2.45 rad/s (settles in ~1.1 s)
+            #   kd = 1.4 -> zeta ~= 0.72
+            # The damping ratio is preserved as kp doubles (the kd
+            # bump satisfies kd = 2*zeta*sqrt(W*kp/v)), so the system
+            # converges monotonically to the line: more aggressive
+            # correction near the edges, no oscillation near centre.
             #
             # ki stays at 0: D-action plus the line-loss hold below
             # rejects bias without integral windup. On real hardware add
             # ki ~= 0.05-0.1 only if a measurable steady-state drift
             # remains after kp/kd are tuned by this same procedure.
-            'line_p_gain': 1.2,
+            'line_p_gain': 2.4,
             'line_i_gain': 0.0,
-            'line_d_gain': 1.0,
+            'line_d_gain': 1.4,
             'line_d_filter_tau': 0.04,
             'line_i_clamp': 0.5,
-            'line_omega_clamp': 1.8,
+            # omega = kp * pose at full deflection (pose = +/-1) would
+            # hit 2.4 rad/s, so raise the clamp to 2.6 to avoid
+            # saturating the correction at the line edge.
+            'line_omega_clamp': 2.6,
             # Turn (open-loop spin, camera-based completion).
             # Spin in place at ``turn_speed`` until the forward camera
             # reports a new line within ``align_aligned_threshold`` of
