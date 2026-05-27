@@ -54,7 +54,10 @@ if [[ ! -d "$WORKSPACE" ]]; then
 fi
 
 cd "$WORKSPACE"
+# ROS 2 setup scripts reference unset vars under `set -u`; relax briefly.
+set +u
 source /opt/ros/humble/setup.bash
+set -u
 
 if [[ -d .git && "$SKIP_GIT_PULL" -eq 0 ]]; then
   git pull --ff-only
@@ -65,6 +68,8 @@ if [[ "$SKIP_ROSDEP" -eq 0 ]]; then
 fi
 
 colcon build --symlink-install
+set +u
 source install/setup.bash
+set -u
 
 echo "AlphaBot workspace is ready: $WORKSPACE"

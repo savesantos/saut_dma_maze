@@ -88,7 +88,11 @@ fi
 
 cd "$ROOT_DIR"
 
+# ROS 2 setup scripts reference unset vars (e.g. AMENT_TRACE_SETUP_FILES);
+# briefly relax nounset so `source` does not abort under `set -u`.
+set +u
 source /opt/ros/humble/setup.bash
+set -u
 
 if [[ "$SKIP_ROSDEP" -eq 0 ]]; then
   rosdep install -i --from-path src --rosdistro humble -y
@@ -98,7 +102,9 @@ if [[ "$SKIP_BUILD" -eq 0 ]]; then
   colcon build --symlink-install
 fi
 
+set +u
 source install/setup.bash
+set -u
 
 policy_glob="data/training/${ALGO}/${MAZE_NAME}/*-seed${SEED}/policy.npz"
 latest_policy="$(ls -td ${policy_glob} 2>/dev/null | head -n 1 || true)"

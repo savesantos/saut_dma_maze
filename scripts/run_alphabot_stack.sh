@@ -49,8 +49,11 @@ if [[ ! -d "$WORKSPACE" ]]; then
   exit 1
 fi
 
+# ROS 2 setup scripts reference unset vars under `set -u`; relax briefly.
+set +u
 source /opt/ros/humble/setup.bash
 source "$WORKSPACE/install/setup.bash"
+set -u
 
 if [[ -n "$ROS_DOMAIN_ID_VALUE" ]]; then
   export ROS_DOMAIN_ID="$ROS_DOMAIN_ID_VALUE"
