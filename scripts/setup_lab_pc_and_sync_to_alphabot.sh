@@ -125,14 +125,25 @@ echo "Using policy: $latest_policy"
 remote_policy_dir="${ROBOT_WS}/shared/policies/${MAZE_NAME}/${ALGO}"
 remote_config_dir="${ROBOT_WS}/shared/bringup_config"
 remote_scripts_dir="${ROBOT_WS}/scripts"
+remote_src_dir="${ROBOT_WS}/src"
 
 # Note: do NOT single-quote these paths on the remote side — ROBOT_WS may
 # contain a leading '~' that must be expanded by the remote login shell.
-ssh "$ROBOT_HOST" "mkdir -p ${remote_policy_dir} ${remote_config_dir}/mazes ${remote_config_dir}/markers ${remote_config_dir}/params ${remote_scripts_dir}"
+ssh "$ROBOT_HOST" "mkdir -p ${remote_policy_dir} ${remote_config_dir}/mazes ${remote_config_dir}/markers ${remote_config_dir}/params ${remote_scripts_dir} ${remote_src_dir}"
 
 rsync -av "$latest_policy" "${ROBOT_HOST}:${remote_policy_dir}/policy-seed${SEED}.npz"
 rsync -av "src/maze_bringup/config/mazes/${MAZE_NAME}.yaml" "${ROBOT_HOST}:${remote_config_dir}/mazes/${MAZE_NAME}.yaml"
 rsync -av "src/maze_bringup/config/params.yaml" "${ROBOT_HOST}:${remote_config_dir}/params/params.yaml"
+
+# Sync robot-side ROS packages so `ros2 run maze_mdp ir_driver_hardware` works.
+# We only need maze_mdp (ir_driver_hardware lives here) and its interface dep
+# maze_msgs. The PC-only packages (maze_bringup, alphabot2_gazebo) are skipped.
+rsync -av --delete \
+  --exclude '__pycache__' --exclude '*.pyc' --exclude '.pytest_cache' \
+  "src/maze_msgs/" "${ROBOT_HOST}:${remote_src_dir}/maze_msgs/"
+rsync -av --delete \
+  --exclude '__pycache__' --exclude '*.pyc' --exclude '.pytest_cache' \
+  "src/maze_mdp/" "${ROBOT_HOST}:${remote_src_dir}/maze_mdp/"
 
 # Sync robot-side helper scripts so they can be run directly on AlphaBot.
 rsync -av "scripts/setup_alphabot.sh" "${ROBOT_HOST}:${remote_scripts_dir}/setup_alphabot.sh"
@@ -150,7 +161,7 @@ Sync complete.
 Remote policy path:
   ${remote_policy_dir}/policy-seed${SEED}.npz
 
-Next on the robot:
-  bash scripts/setup_alphabot.sh --workspace "${ROBOT_WS}"
-  bash scripts/run_alphabot_stack.sh --workspace "${ROBOT_WS}" --domain-id <robot_ip_last_octet>
+Next on the robot (REQUIRED — builds the just-synced maze_mdp / maze_msgs):
+  bash ${remote_scripts_dir}/setup_alphabot.sh --workspace "${ROBOT_WS}" --skip-git-pull
+  bash ${remote_scripts_dir}/run_alphabot_stack.sh --workspace "${ROBOT_WS}" --domain-id <robot_ip_last_octet>
 EOF
