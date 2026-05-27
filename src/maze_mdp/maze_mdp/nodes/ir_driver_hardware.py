@@ -37,6 +37,7 @@ import time
 from typing import List, Optional, Tuple
 
 import rclpy
+from geometry_msgs.msg import Twist
 from rclpy.node import Node
 from std_msgs.msg import Empty, Float32
 
@@ -131,6 +132,17 @@ class IRDriverHardware(Node):
         # have length 3 in channel order (left, centre, right).
         self.declare_parameter('calibrated_min', [0, 0, 0])
         self.declare_parameter('calibrated_max', [0, 0, 0])
+        # Auto-spin during the calibration window: publish alternating
+        # in-place yaw on cmd_vel so the three central channels sweep
+        # over the line without the operator having to nudge the bot.
+        # Disable (set false) if the robot is on a stand or you want to
+        # do the sweep by hand.
+        self.declare_parameter('calibration_auto_spin', True)
+        self.declare_parameter('calibration_cmd_vel_topic',
+                               '/alphabot2/cmd_vel')
+        # Yaw magnitude (rad/s) and half-period (s) of the wiggle.
+        self.declare_parameter('calibration_spin_yaw', 0.6)
+        self.declare_parameter('calibration_spin_half_period_s', 0.7)
         # --- detection thresholds (calibrated units 0..1000) ---
         # A central channel is "on the black tape" when its calibrated
         # reading exceeds this value.
@@ -188,6 +200,15 @@ class IRDriverHardware(Node):
         GPIO.setup(_CS, GPIO.OUT)
         GPIO.setup(_DATA_OUT, GPIO.IN, GPIO.PUD_UP)
 
+        # cmd_vel publisher used optionally during calibration to spin
+        # the robot in place. Created unconditionally so it survives
+        # parameter toggles at runtime, but only written to when
+        # calibration_auto_spin is true.
+        self._cmd_vel_pub = self.create_publisher(
+            Twist,
+            str(self.get_parameter('calibration_cmd_vel_topic').value),
+            10)
+
         # Decide calibration source.
         preset_min = [int(v) for v in (
             self.get_parameter('calibrated_min').value or [])]
@@ -203,7 +224,13 @@ class IRDriverHardware(Node):
             self._cmin, self._cmax = self._live_calibrate(
                 float(self.get_parameter('calibration_seconds').value),
                 int(self.get_parameter(
-                    'calibration_samples_per_burst').value))
+                    'calibration_samples_per_burst').value),
+                bool(self.get_parameter(
+                    'calibration_auto_spin').value),
+                float(self.get_parameter(
+                    'calibration_spin_yaw').value),
+                float(self.get_parameter(
+                    'calibration_spin_half_period_s').value))
 
         self._lost_since: Optional[float] = None
         self._lost_published = False
@@ -227,16 +254,28 @@ class IRDriverHardware(Node):
         return [all_raw[i] for i in _CENTER_IDX]
 
     def _live_calibrate(self, seconds: float,
-                        samples_per_burst: int) -> Tuple[List[int], List[int]]:
-        """Block while the operator sweeps the chassis over the line.
+                        samples_per_burst: int,
+                        auto_spin: bool = False,
+                        spin_yaw: float = 0.6,
+                        spin_half_period_s: float = 0.7,
+                        ) -> Tuple[List[int], List[int]]:
+        """Block while sweeping the chassis over the line.
 
         Tracks per-channel min and max raw readings (3 central channels
-        only). The operator must move the bot back and forth so each
-        central channel sees both the white floor and the black tape.
+        only). When ``auto_spin`` is True the node publishes alternating
+        in-place yaw on cmd_vel so the trio sweeps the line on its own;
+        otherwise the operator must nudge the bot by hand.
         """
-        self.get_logger().warning(
-            f'Calibrating IR for {seconds:.1f}s -- sweep the AlphaBot2 '
-            f'over the line now (motors must be OFF).')
+        if auto_spin:
+            self.get_logger().warning(
+                f'Calibrating IR for {seconds:.1f}s -- spinning in place '
+                f'(yaw={spin_yaw:.2f} rad/s, half-period='
+                f'{spin_half_period_s:.2f}s). Keep the bot centred on the '
+                f'line.')
+        else:
+            self.get_logger().warning(
+                f'Calibrating IR for {seconds:.1f}s -- sweep the '
+                f'AlphaBot2 over the line now (motors must be OFF).')
         # Seed with the first reading so the min/max are real numbers,
         # not 0/1023 placeholders that would never tighten.
         first = self._read_center()
@@ -244,15 +283,32 @@ class IRDriverHardware(Node):
         cmax = list(first)
         deadline = time.monotonic() + max(seconds, 0.0)
         bursts = 0
-        while time.monotonic() < deadline:
-            for _ in range(max(samples_per_burst, 1)):
-                vals = self._read_center()
-                for i, v in enumerate(vals):
-                    if v < cmin[i]:
-                        cmin[i] = v
-                    if v > cmax[i]:
-                        cmax[i] = v
-            bursts += 1
+        spin_started = time.monotonic()
+        half_p = max(float(spin_half_period_s), 0.05)
+        try:
+            while time.monotonic() < deadline:
+                if auto_spin:
+                    # Square-wave yaw: +yaw for half_p seconds, then
+                    # -yaw for half_p seconds, repeat. Linear x stays 0.
+                    phase = int(
+                        (time.monotonic() - spin_started) // half_p)
+                    sign = 1.0 if (phase % 2 == 0) else -1.0
+                    msg = Twist()
+                    msg.angular.z = sign * float(spin_yaw)
+                    self._cmd_vel_pub.publish(msg)
+                for _ in range(max(samples_per_burst, 1)):
+                    vals = self._read_center()
+                    for i, v in enumerate(vals):
+                        if v < cmin[i]:
+                            cmin[i] = v
+                        if v > cmax[i]:
+                            cmax[i] = v
+                bursts += 1
+        finally:
+            if auto_spin:
+                # Always brake at the end of calibration, even on error.
+                stop = Twist()
+                self._cmd_vel_pub.publish(stop)
         self.get_logger().info(
             f'Calibration done after {bursts} bursts: '
             f'min={cmin} max={cmax}')
