@@ -141,8 +141,13 @@ class IRDriverHardware(Node):
         self.declare_parameter('calibration_cmd_vel_topic',
                                '/alphabot2/cmd_vel')
         # Yaw magnitude (rad/s) and half-period (s) of the wiggle.
-        self.declare_parameter('calibration_spin_yaw', 0.6)
-        self.declare_parameter('calibration_spin_half_period_s', 0.7)
+        # Defaults tuned for the real AlphaBot2: 0.6 rad/s + 0.7 s was below
+        # the motor deadband / wheel inertia, so the chassis only jerked.
+        # 1.8 rad/s with a 1.5 s half-period gives a clean ~120 deg sweep
+        # before reversing, so all three central channels see both the
+        # white floor and the black tape.
+        self.declare_parameter('calibration_spin_yaw', 1.8)
+        self.declare_parameter('calibration_spin_half_period_s', 1.5)
         # --- detection thresholds (calibrated units 0..1000) ---
         # A central channel is "on the black tape" when its calibrated
         # reading exceeds this value.
