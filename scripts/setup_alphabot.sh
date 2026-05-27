@@ -202,19 +202,34 @@ if [[ "$PYTHON_ONLY" -eq 1 ]]; then
   # robot. It REQUIRES that maze_msgs has already been built at least once
   # (which produces the architecture-specific typesupport .so files).
   src_dir="$WORKSPACE/src/maze_mdp/maze_mdp"
-  # Look up the install dir from the existing build. ament_python installs
-  # the python package under install/maze_mdp/lib/pythonX.Y/site-packages/.
-  candidate_dirs=( "$WORKSPACE"/install/maze_mdp/lib/python*/site-packages/maze_mdp )
-  install_dir="${candidate_dirs[0]}"
+  # Find the installed maze_mdp Python package. ament_python normally puts it
+  # at install/maze_mdp/lib/pythonX.Y/site-packages/maze_mdp, but on Ubuntu
+  # 22.04 with --symlink-install it can also land under
+  # install/maze_mdp/local/lib/pythonX.Y/dist-packages/maze_mdp. Find both.
+  install_dir=""
+  if [[ -d "$WORKSPACE/install/maze_mdp" ]]; then
+    install_dir="$(find "$WORKSPACE/install/maze_mdp" \
+      -mindepth 3 -maxdepth 6 -type d -name maze_mdp \
+      -path '*/python*/site-packages/maze_mdp' -print -quit 2>/dev/null || true)"
+    if [[ -z "$install_dir" ]]; then
+      install_dir="$(find "$WORKSPACE/install/maze_mdp" \
+        -mindepth 3 -maxdepth 6 -type d -name maze_mdp \
+        -path '*/python*/dist-packages/maze_mdp' -print -quit 2>/dev/null || true)"
+    fi
+  fi
   if [[ ! -d "$src_dir" ]]; then
     echo "ERROR: $src_dir not found. Sync maze_mdp first." >&2
     exit 1
   fi
-  if [[ ! -d "$install_dir" ]]; then
-    echo "ERROR: $install_dir not found." >&2
-    echo "  maze_mdp has never been built here. Run this script once without" >&2
-    echo "  --python-only so colcon creates the install tree, then use" >&2
-    echo "  --python-only for subsequent iterations." >&2
+  if [[ -z "$install_dir" || ! -d "$install_dir" ]]; then
+    echo "ERROR: maze_mdp install dir not found under $WORKSPACE/install/maze_mdp." >&2
+    echo "  Tree (top levels):" >&2
+    [[ -d "$WORKSPACE/install/maze_mdp" ]] \
+      && find "$WORKSPACE/install/maze_mdp" -maxdepth 4 -type d \
+         | sed 's/^/    /' >&2 \
+      || echo "    (install/maze_mdp does not exist)" >&2
+    echo "  Re-run this script once without --python-only so colcon" >&2
+    echo "  creates the install tree, then use --python-only." >&2
     exit 1
   fi
   if [[ ! -d "$WORKSPACE/install/maze_msgs" ]]; then
