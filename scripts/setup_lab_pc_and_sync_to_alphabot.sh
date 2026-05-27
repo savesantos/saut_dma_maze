@@ -162,6 +162,9 @@ Remote policy path:
   ${remote_policy_dir}/policy-seed${SEED}.npz
 
 Next on the robot (REQUIRED — builds the just-synced maze_mdp / maze_msgs):
-  bash ${remote_scripts_dir}/setup_alphabot.sh --workspace "${ROBOT_WS}" --skip-git-pull
-  bash ${remote_scripts_dir}/run_alphabot_stack.sh --workspace "${ROBOT_WS}" --domain-id <robot_ip_last_octet>
+  bash ${remote_scripts_dir}/setup_alphabot.sh --skip-git-pull
+  bash ${remote_scripts_dir}/run_alphabot_stack.sh --domain-id <robot_ip_last_octet>
+
+(omit --workspace; the default \$HOME/alphabot2_ws is correct. Do NOT pass
+ --workspace "~/alphabot2_ws" — bash does not expand ~ inside quotes.)
 EOF

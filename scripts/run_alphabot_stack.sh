@@ -44,6 +44,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Expand a leading '~' that may have survived quoting on the command line.
+case "$WORKSPACE" in
+  '~'|'~/'*) WORKSPACE="${HOME}${WORKSPACE#\~}" ;;
+esac
+
 if [[ ! -d "$WORKSPACE" ]]; then
   echo "ERROR: workspace not found: $WORKSPACE" >&2
   exit 1
