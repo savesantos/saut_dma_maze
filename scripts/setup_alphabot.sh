@@ -143,6 +143,34 @@ if [[ "$USE_APT_VENDOR" -eq 1 && "$PYTHON_ONLY" -eq 0 ]]; then
   if [[ ${#missing_pkgs[@]} -gt 0 ]]; then
     echo "[setup_alphabot] Installing vendor packages from apt (avoids compiling on the Pi):"
     printf '  %s\n' "${missing_pkgs[@]}"
+
+    # Wait for any concurrent apt/dpkg holder (unattended-upgrades, apt-daily,
+    # an interactive apt run, etc.) to release the locks. Up to ~10 min.
+    apt_lock_files=(
+      /var/lib/dpkg/lock-frontend
+      /var/lib/dpkg/lock
+      /var/lib/apt/lists/lock
+    )
+    wait_secs=0
+    while :; do
+      busy=0
+      for f in "${apt_lock_files[@]}"; do
+        if sudo fuser "$f" >/dev/null 2>&1; then busy=1; break; fi
+      done
+      [[ "$busy" -eq 0 ]] && break
+      if (( wait_secs == 0 )); then
+        echo "[setup_alphabot] Waiting for another apt/dpkg process to finish..."
+      fi
+      sleep 5
+      wait_secs=$((wait_secs + 5))
+      if (( wait_secs >= 600 )); then
+        echo "ERROR: apt locks still held after ${wait_secs}s." >&2
+        echo "  Run 'ps -ef | grep -E apt\\|dpkg\\|unattended' on the robot," >&2
+        echo "  wait for unattended-upgrades to finish, then re-run this script." >&2
+        exit 1
+      fi
+    done
+
     sudo apt-get update
     sudo apt-get install -y "${missing_pkgs[@]}"
   else
