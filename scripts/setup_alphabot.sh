@@ -222,6 +222,23 @@ if [[ "$PYTHON_ONLY" -eq 1 ]]; then
     exit 1
   fi
   if [[ -z "$install_dir" || ! -d "$install_dir" ]]; then
+    # Self-heal: if the install/maze_mdp tree exists but the python package
+    # never landed in site-packages (e.g. --symlink-install raced the rsync),
+    # create the symlink ourselves. ament_python with --symlink-install would
+    # create exactly this symlink.
+    site_pkgs="$(find "$WORKSPACE/install/maze_mdp" \
+      -mindepth 2 -maxdepth 5 -type d \
+      \( -name site-packages -o -name dist-packages \) \
+      -print -quit 2>/dev/null || true)"
+    if [[ -n "$site_pkgs" && -d "$src_dir" ]]; then
+      ln -sfn "$src_dir" "$site_pkgs/maze_mdp"
+      install_dir="$site_pkgs/maze_mdp"
+      echo "[setup_alphabot] Self-healed missing site-packages symlink:"
+      echo "    $install_dir -> $src_dir"
+    fi
+  fi
+
+  if [[ -z "$install_dir" || ! -e "$install_dir" ]]; then
     echo "ERROR: maze_mdp install dir not found under $WORKSPACE/install/maze_mdp." >&2
     echo "  Tree (top levels):" >&2
     [[ -d "$WORKSPACE/install/maze_mdp" ]] \
@@ -241,9 +258,24 @@ if [[ "$PYTHON_ONLY" -eq 1 ]]; then
   echo "[setup_alphabot] --python-only: refreshing maze_mdp sources"
   echo "  src     : $src_dir"
   echo "  install : $install_dir"
-  rsync -a --delete \
-    --exclude '__pycache__' --exclude '*.pyc' \
-    "$src_dir"/ "$install_dir"/
+  # If the install location is a symlink back to src (the ament_python +
+  # --symlink-install layout), rsync is unnecessary and would copy a tree
+  # onto itself. Just trust the symlink.
+  if [[ -L "$install_dir" ]]; then
+    link_target="$(readlink -f "$install_dir")"
+    src_real="$(readlink -f "$src_dir")"
+    if [[ "$link_target" == "$src_real" ]]; then
+      echo "  (install path is a symlink to src; nothing to copy)"
+    else
+      rsync -a --delete \
+        --exclude '__pycache__' --exclude '*.pyc' \
+        "$src_dir"/ "$install_dir"/
+    fi
+  else
+    rsync -a --delete \
+      --exclude '__pycache__' --exclude '*.pyc' \
+      "$src_dir"/ "$install_dir"/
+  fi
   set +u
   source install/setup.bash
   set -u
