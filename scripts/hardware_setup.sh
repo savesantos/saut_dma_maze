@@ -79,26 +79,31 @@ while ! flock -n /var/lib/dpkg/lock-frontend -c true 2>/dev/null; do
 done
 echo "[setup] dpkg lock acquired."
 
-apt update
-
-for pkg in python3-numpy python3-opencv v4l-utils; do
-    if apt-cache show "$pkg" >/dev/null 2>&1; then
-        echo "[setup] installing apt package: $pkg"
-        apt install -y "$pkg"
+# Build list of packages that are NOT already installed.
+all_pkgs=(python3-numpy python3-opencv v4l-utils python3-picamera2 python3-libcamera)
+to_install=()
+for pkg in "${all_pkgs[@]}"; do
+    if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then
+        echo "[setup] already installed, skipping: $pkg"
     else
-        echo "[setup] WARNING: apt package not available on this image: $pkg"
+        to_install+=("$pkg")
     fi
 done
 
-# Try distro packages first for camera stack.
-for pkg in python3-picamera2 python3-libcamera; do
-    if apt-cache show "$pkg" >/dev/null 2>&1; then
-        echo "[setup] installing apt package: $pkg"
-        apt install -y "$pkg"
-    else
-        echo "[setup] WARNING: apt package not available on this image: $pkg"
-    fi
-done
+if [[ ${#to_install[@]} -gt 0 ]]; then
+    echo "[setup] packages to install: ${to_install[*]}"
+    apt update
+    for pkg in "${to_install[@]}"; do
+        if apt-cache show "$pkg" >/dev/null 2>&1; then
+            echo "[setup] installing apt package: $pkg"
+            apt install -y "$pkg"
+        else
+            echo "[setup] WARNING: apt package not available on this image: $pkg"
+        fi
+    done
+else
+    echo "[setup] all apt packages already present, skipping apt update."
+fi
 
 python3 - <<'PY'
 import importlib.util
