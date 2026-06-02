@@ -91,11 +91,14 @@ if [[ -f "$POLICY_FILE" ]]; then
 fi
 
 echo "[run-complex] starting line_follow_complex.py on robot"
-# Keep sudo so GPIO/NeoPixel-dependent code can access privileged devices.
-# Source ROS first because line_follow_complex.py imports rclpy and ROS messages.
-echo "[run-complex] preflight: checking image topics from same sudo ROS env"
-ssh -t "$ROBOT_HOST" "sudo -E env $REMOTE_BASE_ENV bash -lc 'source /opt/ros/humble/setup.bash && echo [preflight] topic list: && ros2 topic list | grep -E image\\|camera || true && echo [preflight] /alphabot2/image_raw: && ros2 topic info /alphabot2/image_raw || true && echo [preflight] /alphabot2/image_raw/compressed: && ros2 topic info /alphabot2/image_raw/compressed || true && echo [preflight] /image/compressed: && ros2 topic info /image/compressed || true'"
-ssh -t "$ROBOT_HOST" "cd $REMOTE_DIR && sudo -E env $REMOTE_RUN_ENV bash -lc 'source /opt/ros/humble/setup.bash && python3 line_follow_complex.py \
+# Run as the 'deec' user (not root) so that DDS shared-memory can reach the
+# camera publisher which also runs as deec.  AlphaBot2 GPIO access works when
+# deec belongs to the gpio/spi groups (standard AlphaBot2 Pi setup).  If GPIO
+# is not accessible the node degrades gracefully: motors are skipped but the
+# camera subscriber and policy logic still run.
+echo "[run-complex] preflight: checking image topics from same user ROS env"
+ssh -t "$ROBOT_HOST" "env $REMOTE_BASE_ENV bash -lc 'source /opt/ros/humble/setup.bash && echo [preflight] topic list: && ros2 topic list | grep -E image\\|camera || true && echo [preflight] /alphabot2/image_raw: && ros2 topic info /alphabot2/image_raw || true && echo [preflight] /alphabot2/image_raw/compressed: && ros2 topic info /alphabot2/image_raw/compressed || true'"
+ssh -t "$ROBOT_HOST" "cd $REMOTE_DIR && env $REMOTE_RUN_ENV bash -lc 'source /opt/ros/humble/setup.bash && python3 line_follow_complex.py \
   --policy $REMOTE_POLICY_FILE \
   --rows $ROWS --cols $COLS \
   --row $START_ROW --col $START_COL --heading $START_HEADING \
