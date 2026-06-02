@@ -1,5 +1,6 @@
 import rclpy
 from rclpy.node import Node
+from rclpy.exceptions import RCLError
 
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
@@ -9,6 +10,7 @@ import cv2
 import numpy as np
 from typing import List, Tuple, Optional
 import time
+import argparse
 
 try:
     from AlphaBot2 import AlphaBot2
@@ -48,16 +50,18 @@ FORWARD_SPEED = 20
 TURN_SPEED = 15
 MAX_OFFSET = 160  # Maximum offset (half of typical 320px width)
 
-# MDP configuration
-MAZE_ROWS = 7
-MAZE_COLS = 7
-INITIAL_ROW = 0
-INITIAL_COL = 0
-INITIAL_HEADING = 1  # 0=N, 1=E, 2=S, 3=W
-GOAL_ROW = 6
-GOAL_COL = 0
-MAX_STEPS = 200
+# MDP configuration (defaults; can be overridden via CLI args)
+MAZE_ROWS_DEFAULT = 7
+MAZE_COLS_DEFAULT = 7
+INITIAL_ROW_DEFAULT = 0
+INITIAL_COL_DEFAULT = 0
+INITIAL_HEADING_DEFAULT = 1  # 0=N, 1=E, 2=S, 3=W
+GOAL_ROW_DEFAULT = 6
+GOAL_COL_DEFAULT = 0
+MAX_STEPS_DEFAULT = 200
+POLICY_FILE_DEFAULT = 'policy.npz'
 INTERSECTION_THRESHOLD = 900  # Sensor value threshold for intersection detection
+IMAGE_TOPICS = ('/alphabot2/image_raw', '/image_raw')
 
 # Continuous spin configuration (from complex_camera.py)
 SPIN_SPEED = 6
@@ -295,17 +299,26 @@ def draw_visualization(frame: np.ndarray,
 
 
 class LineFollowComplexNode(Node):
-    def __init__(self):
+    def __init__(self, config: dict):
         super().__init__('line_follow_complex')
         self.bridge = CvBridge()
         self.frame_counter = 0
         self.last_process_time = None
         self.window_name = 'Line Follow Complex'
+        self._active_image_topic = None
+
+        # Load config
+        self.maze_rows = config['maze_rows']
+        self.maze_cols = config['maze_cols']
+        self.goal_row = config['goal_row']
+        self.goal_col = config['goal_col']
+        self.max_steps = config['max_steps']
+        self.policy_file = config['policy_file']
 
         # MDP state tracking
-        self.robot_row = INITIAL_ROW
-        self.robot_col = INITIAL_COL
-        self.robot_heading = INITIAL_HEADING
+        self.robot_row = config['initial_row']
+        self.robot_col = config['initial_col']
+        self.robot_heading = config['initial_heading']
         self.steps_taken = 0
         self.done = False
         self.at_intersection = False
@@ -331,11 +344,12 @@ class LineFollowComplexNode(Node):
         else:
             self.Ab = None
 
-        self.subscription = self.create_subscription(
-            Image,
-            '/alphabot2/image_raw',
-            self.image_callback,
-            10
+        self._image_subscriptions = [
+            self.create_subscription(Image, topic, self.image_callback, 10)
+            for topic in IMAGE_TOPICS
+        ]
+        self.get_logger().info(
+            f'Subscribed to image topics: {", ".join(IMAGE_TOPICS)}'
         )
 
         self.publisher = self.create_publisher(
@@ -356,19 +370,33 @@ class LineFollowComplexNode(Node):
 
     def load_policy(self):
         """Load policy from policy.npz file"""
-        policy_file = os.path.join(os.path.dirname(__file__), 'policy.npz')
-        self.pi = load_policy(policy_file)
-        if self.pi is not None:
-            expected_states = MAZE_ROWS * MAZE_COLS * 4
-            if self.pi.size != expected_states:
-                self.get_logger().error(
-                    f'policy size {self.pi.size} does not match rows*cols*4 = {expected_states}'
-                )
-                self.pi = None
-            else:
-                self.get_logger().info(f'Loaded policy with {self.pi.size} states')
-        else:
-            self.get_logger().warning(f'Failed to load policy from {policy_file}')
+        # Search for policy file: first check explicit path, then relative to script dir
+        policy_paths = [
+            self.policy_file,
+            os.path.join(os.path.dirname(__file__), self.policy_file),
+        ]
+        
+        for policy_file in policy_paths:
+            if os.path.exists(policy_file):
+                data = np.load(policy_file, allow_pickle=True)
+                if 'pi' in data.files:
+                    self.pi = np.asarray(data['pi'], dtype=np.int64)
+                elif 'Q' in data.files:
+                    self.pi = np.asarray(data['Q']).argmax(axis=1).astype(np.int64)
+                else:
+                    continue
+                
+                expected_states = self.maze_rows * self.maze_cols * 4
+                if self.pi.size != expected_states:
+                    self.get_logger().error(
+                        f'policy size {self.pi.size} does not match rows*cols*4 = {expected_states}'
+                    )
+                    self.pi = None
+                else:
+                    self.get_logger().info(f'Loaded policy from {policy_file} with {self.pi.size} states')
+                return
+        
+        self.get_logger().warning(f'Failed to load policy from any of: {policy_paths}')
 
     def execute_action(self, action):
         """Execute an action from the policy.
@@ -459,6 +487,10 @@ class LineFollowComplexNode(Node):
         self.Ab.setPWMB(pwm_b)
 
     def image_callback(self, msg: Image):
+        if self._active_image_topic is None:
+            self._active_image_topic = msg.header.frame_id or 'unknown'
+            self.get_logger().info('Receiving camera frames; line follower is active')
+
         self.frame_counter += 1
         if THROTTLE_MODE == 'count':
             if self.frame_counter % PROCESS_EVERY_N_FRAMES != 0:
@@ -539,8 +571,8 @@ class LineFollowComplexNode(Node):
         # Execute policy action only at intersections and when not spinning
         if self.pi is not None and self.at_intersection and not self.previous_at_intersection:
             if self.spinning_direction is None:  # Only act if spin is complete
-                if not self.done and self.steps_taken < MAX_STEPS:
-                    s = state_index(self.robot_row, self.robot_col, self.robot_heading, MAZE_COLS)
+                if not self.done and self.steps_taken < self.max_steps:
+                    s = state_index(self.robot_row, self.robot_col, self.robot_heading, self.maze_cols)
                     action = int(self.pi[s])
                     self.execute_action(action)
                     self.steps_taken += 1
@@ -558,7 +590,7 @@ class LineFollowComplexNode(Node):
                     self.get_logger().info(action_status)
                     
                     # Check if goal reached
-                    if (self.robot_row, self.robot_col) == (GOAL_ROW, GOAL_COL):
+                    if (self.robot_row, self.robot_col) == (self.goal_row, self.goal_col):
                         self.done = True
                         if self.Ab is not None:
                             self.Ab.stop()
@@ -611,15 +643,91 @@ class LineFollowComplexNode(Node):
 
 
 def main(args=None):
-    rclpy.init(args=args)
-    node = LineFollowComplexNode()
+    parser = argparse.ArgumentParser(
+        description='Line follow complex node with policy execution on AlphaBot2'
+    )
+    parser.add_argument(
+        '--policy',
+        type=str,
+        default=POLICY_FILE_DEFAULT,
+        help=f'Path to policy.npz file (default: {POLICY_FILE_DEFAULT})'
+    )
+    parser.add_argument(
+        '--rows',
+        type=int,
+        default=MAZE_ROWS_DEFAULT,
+        help=f'Maze rows (default: {MAZE_ROWS_DEFAULT})'
+    )
+    parser.add_argument(
+        '--cols',
+        type=int,
+        default=MAZE_COLS_DEFAULT,
+        help=f'Maze columns (default: {MAZE_COLS_DEFAULT})'
+    )
+    parser.add_argument(
+        '--row',
+        type=int,
+        default=INITIAL_ROW_DEFAULT,
+        help=f'Initial robot row (default: {INITIAL_ROW_DEFAULT})'
+    )
+    parser.add_argument(
+        '--col',
+        type=int,
+        default=INITIAL_COL_DEFAULT,
+        help=f'Initial robot column (default: {INITIAL_COL_DEFAULT})'
+    )
+    parser.add_argument(
+        '--heading',
+        type=int,
+        default=INITIAL_HEADING_DEFAULT,
+        help=f'Initial heading: 0=N, 1=E, 2=S, 3=W (default: {INITIAL_HEADING_DEFAULT})'
+    )
+    parser.add_argument(
+        '--goal-row',
+        type=int,
+        default=GOAL_ROW_DEFAULT,
+        help=f'Goal row (default: {GOAL_ROW_DEFAULT})'
+    )
+    parser.add_argument(
+        '--goal-col',
+        type=int,
+        default=GOAL_COL_DEFAULT,
+        help=f'Goal column (default: {GOAL_COL_DEFAULT})'
+    )
+    parser.add_argument(
+        '--max-steps',
+        type=int,
+        default=MAX_STEPS_DEFAULT,
+        help=f'Maximum steps (default: {MAX_STEPS_DEFAULT})'
+    )
+    
+    parsed_args = parser.parse_args(args)
+    
+    config = {
+        'policy_file': parsed_args.policy,
+        'maze_rows': parsed_args.rows,
+        'maze_cols': parsed_args.cols,
+        'initial_row': parsed_args.row,
+        'initial_col': parsed_args.col,
+        'initial_heading': parsed_args.heading,
+        'goal_row': parsed_args.goal_row,
+        'goal_col': parsed_args.goal_col,
+        'max_steps': parsed_args.max_steps,
+    }
+    
+    rclpy.init(args=None)  # Don't pass sys.argv to rclpy, only our custom args
+    node = LineFollowComplexNode(config)
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        try:
+            rclpy.shutdown()
+        except RCLError:
+            # Shutdown may already be in progress after Ctrl+C.
+            pass
         cv2.destroyAllWindows()
 
 
