@@ -84,7 +84,7 @@ echo "[setup] dpkg lock acquired."
 # Core packages needed (always try to install)
 core_pkgs=(python3-numpy python3-rpi.gpio)
 # Camera backends: try both picamera2/libcamera (preferred) and opencv (fallback)
-camera_pkgs=(python3-picamera2 python3-libcamera python3-opencv v4l-utils)
+camera_pkgs=(python3-picamera2 python3-libcamera python3-opencv v4l-utils ros2-humble-cv-bridge)
 
 to_install=()
 for pkg in "${core_pkgs[@]}"; do
