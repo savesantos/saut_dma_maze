@@ -50,7 +50,8 @@ ssh "$ROBOT_HOST" "mkdir -p $REMOTE_DIR"
 
 if [[ "$INSTALL_DEPS" == "1" ]]; then
     echo "[setup] installing python deps on robot (sudo may prompt for password)..."
-    ssh "$ROBOT_HOST" "sudo apt update && sudo apt install -y python3-picamera2 python3-libcamera python3-numpy"
+    # Force a pseudo-terminal so sudo can read the password interactively.
+    ssh -tt "$ROBOT_HOST" "sudo apt update && sudo apt install -y python3-picamera2 python3-libcamera python3-numpy"
 fi
 
 echo "[setup] copying runner + policy to robot..."
