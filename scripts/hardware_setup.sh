@@ -19,6 +19,9 @@ ALGO="${ALGO:-qlearning}"
 POLICY_PATH="${POLICY_PATH:-}"
 INSTALL_DEPS="${INSTALL_DEPS:-1}"
 CAMERA_REQUIRED="${CAMERA_REQUIRED:-1}"
+# Optional: local directory containing AlphaBot2.py and TRSensors.py.
+# If empty the script will search common locations on the robot.
+ALPHABOT2_LIB_DIR="${ALPHABOT2_LIB_DIR:-}"
 
 if [[ -z "$POLICY_PATH" ]]; then
     latest_run="$(ls -td "data/training/${ALGO}/${MAZE_NAME}/"* 2>/dev/null | head -1 || true)"
@@ -121,8 +124,54 @@ REMOTE_SETUP
 fi
 
 echo "[setup] copying runner + policy to robot..."
-scp "$RUNNER_PATH" "$ROBOT_HOST:$REMOTE_DIR/line_follow_policy.py"
-scp "$ALIGNER_PATH" "$ROBOT_HOST:$REMOTE_DIR/camera_align.py"
-scp "$POLICY_PATH" "$ROBOT_HOST:$REMOTE_DIR/policy.npz"
+scp \
+    "$RUNNER_PATH" \
+    "$ALIGNER_PATH" \
+    "$POLICY_PATH" \
+    "$ROBOT_HOST:$REMOTE_DIR"
+
+# ---------------------------------------------------------------- AlphaBot2 library
+# AlphaBot2.py and TRSensors.py must be co-located with the runner so
+# that `python3 line_follow_policy.py` can import them without any
+# special PYTHONPATH. Copy from a local override directory if given,
+# otherwise search common Waveshare/course locations on the robot.
+if [[ -n "$ALPHABOT2_LIB_DIR" ]]; then
+    echo "[setup] copying AlphaBot2 library from local $ALPHABOT2_LIB_DIR ..."
+    scp \
+        "$ALPHABOT2_LIB_DIR/AlphaBot2.py" \
+        "$ALPHABOT2_LIB_DIR/TRSensors.py" \
+        "$ROBOT_HOST:$REMOTE_DIR"
+else
+    echo "[setup] searching for AlphaBot2.py + TRSensors.py on the robot..."
+    # Ordered list of candidate directories on the Pi (Waveshare demo and
+    # course-staff layouts seen in practice).
+    ab2_found=""
+    for search_dir in \
+        "/home/deec" \
+        "/home/deec/AlphaBot2" \
+        "/home/deec/AlphaBot2-Demo" \
+        "/home/pi" \
+        "/home/pi/AlphaBot2" \
+        "/home/pi/AlphaBot2-Demo" \
+        "/opt/AlphaBot2"
+    do
+        result="$(ssh "$ROBOT_HOST" \
+            "test -f '${search_dir}/AlphaBot2.py' && test -f '${search_dir}/TRSensors.py' && echo yes || echo no" \
+            2>/dev/null || echo no)"
+        if [[ "$result" == "yes" ]]; then
+            ab2_found="$search_dir"
+            break
+        fi
+    done
+
+    if [[ -n "$ab2_found" ]]; then
+        echo "[setup] found library at $ab2_found; copying to $REMOTE_DIR..."
+        ssh "$ROBOT_HOST" \
+            "cp '${ab2_found}/AlphaBot2.py' '${ab2_found}/TRSensors.py' '$REMOTE_DIR'"
+    else
+        echo "WARNING: AlphaBot2.py / TRSensors.py not found on the robot." >&2
+        echo "Set ALPHABOT2_LIB_DIR=<local-dir> or copy them manually to $REMOTE_DIR on the robot." >&2
+    fi
+fi
 
 echo "[done] hardware assets are on $ROBOT_HOST:$REMOTE_DIR"
