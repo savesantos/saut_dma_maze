@@ -209,7 +209,11 @@ class CameraAligner:
         self._frame_idx = 0
 
     def start(self) -> bool:
-        if _PICAMERA2_AVAILABLE:
+        backend_pref = os.environ.get('CAMERA_BACKEND', 'auto').strip().lower()
+        allow_picamera2 = backend_pref in ('', 'auto', 'picamera2')
+        allow_opencv = backend_pref in ('', 'auto', 'opencv')
+
+        if allow_picamera2 and _PICAMERA2_AVAILABLE:
             try:
                 cam = Picamera2()
                 config = cam.create_video_configuration(
@@ -225,11 +229,11 @@ class CameraAligner:
                 print('[camera_align] picamera2 start failed: {}'.format(exc))
                 self._cam = None
                 self._backend = None
-        else:
+        elif allow_picamera2:
             print('[camera_align] picamera2 not available: {}'
                   .format(_PICAMERA2_IMPORT_ERROR))
 
-        if _OPENCV_AVAILABLE:
+        if allow_opencv and _OPENCV_AVAILABLE:
             try:
                 # Suppress GStreamer/libv4l2 warnings when opening camera
                 os.environ['OPENCV_VIDEOIO_DEBUG'] = '0'
@@ -266,9 +270,13 @@ class CameraAligner:
                 print('[camera_align] opencv start failed: {}'.format(exc))
                 self._cam = None
                 self._backend = None
-        else:
+                elif allow_opencv:
             print('[camera_align] opencv not available: {}'
                   .format(_OPENCV_IMPORT_ERROR))
+
+                if backend_pref not in ('', 'auto', 'picamera2', 'opencv'):
+                        print('[camera_align] invalid CAMERA_BACKEND={} (expected auto|picamera2|opencv)'
+                                    .format(backend_pref))
 
         return False
 

@@ -30,18 +30,20 @@ START_HEADING="${START_HEADING:-1}"
 GOAL_ROW="${GOAL_ROW:-6}"
 GOAL_COL="${GOAL_COL:-0}"
 MAX_STEPS="${MAX_STEPS:-200}"
+CAMERA_BACKEND="${CAMERA_BACKEND:-opencv}"
 
 EXTRA_ARGS="${EXTRA_ARGS:-}"
 
 echo "[run] robot: $ROBOT_HOST"
 echo "[run] defaults: rows=$ROWS cols=$COLS row=$START_ROW col=$START_COL heading=$START_HEADING"
+echo "[run] camera backend preference: $CAMERA_BACKEND"
 
 echo "[run] command will execute on the robot in $REMOTE_DIR"
 # rpi_ws281x needs /dev/mem access (root) for the NeoPixel ring.
 # We use 'sudo env PATH=...' so sudo picks up the same python3 (and
 # site-packages) as the deec user, not the bare system interpreter.
 # The script degrades gracefully without LEDs if sudo is unavailable.
-ssh -t "$ROBOT_HOST" "cd $REMOTE_DIR && sudo env PATH=\$PATH \$(which python3) line_follow_policy.py \
+ssh -t "$ROBOT_HOST" "cd $REMOTE_DIR && sudo env PATH=\$PATH CAMERA_BACKEND=$CAMERA_BACKEND \$(which python3) line_follow_policy.py \
   --policy $POLICY_FILE \
   --rows $ROWS --cols $COLS \
   --row $START_ROW --col $START_COL --heading $START_HEADING \

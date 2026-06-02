@@ -83,7 +83,7 @@ echo "[setup] dpkg lock acquired."
 # Core packages needed (always try to install)
 core_pkgs=(python3-numpy python3-rpi.gpio)
 # Camera backends: try both picamera2/libcamera (preferred) and opencv (fallback)
-camera_pkgs=(python3-picamera2 python3-libcamera python3-opencv v4l-utils libatlas-base-dev libjasper-dev libtiff5 libjasper1 libharfbuzz0b libwebp6 libtiff6 libwebp6)
+camera_pkgs=(python3-picamera2 python3-libcamera python3-opencv v4l-utils)
 
 to_install=()
 for pkg in "${core_pkgs[@]}"; do
@@ -174,7 +174,7 @@ if not critical_ok:
 
 if not camera_backend:
     print("[setup] WARNING: no camera backend available; alignment will be unavailable")
-    sys.exit(0)  # Allow continuation but with degraded features
+    sys.exit(2)
 
 print("[setup] Module check passed")
 PY
@@ -183,14 +183,25 @@ REMOTE_SETUP
     remote_setup_path="/tmp/hardware_setup_deps_$$.sh"
     scp "$tmp_setup_script" "$ROBOT_HOST:$remote_setup_path"
     rm -f "$tmp_setup_script"
-    if ! ssh -tt "$ROBOT_HOST" "chmod +x '$remote_setup_path' && sudo bash '$remote_setup_path'; rc=\$?; rm -f '$remote_setup_path'; exit \$rc"; then
-        exit_code=$?
-        if [[ $exit_code -eq 1 ]]; then
+    if ssh -tt "$ROBOT_HOST" "chmod +x '$remote_setup_path' && sudo bash '$remote_setup_path'; rc=\$?; rm -f '$remote_setup_path'; exit \$rc"; then
+        :
+    else
+        setup_rc=$?
+        if [[ $setup_rc -eq 1 ]]; then
             echo "ERROR: critical dependencies failed on the robot (numpy, RPi.GPIO)." >&2
             exit 1
         fi
-        # exit_code == 0 means degraded mode (no camera backend), which is acceptable
-        echo "[setup] WARNING: camera backend unavailable; policy will run without camera alignment"
+        if [[ $setup_rc -eq 2 ]]; then
+            if [[ "$CAMERA_REQUIRED" == "1" ]]; then
+                echo "ERROR: required camera backend missing on the robot." >&2
+                echo "Set CAMERA_REQUIRED=0 to continue without camera alignment." >&2
+                exit 1
+            fi
+            echo "[setup] WARNING: camera backend unavailable; policy will run without camera alignment"
+        else
+            echo "ERROR: dependency setup failed on robot (exit $setup_rc)." >&2
+            exit "$setup_rc"
+        fi
     fi
 fi
 
