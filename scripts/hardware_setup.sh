@@ -60,6 +60,25 @@ if [[ "$INSTALL_DEPS" == "1" ]]; then
     cat >"$tmp_setup_script" <<'REMOTE_SETUP'
 set -euo pipefail
 
+# Wait for any running unattended-upgrades / apt process to release the lock.
+# unattended-upgr commonly holds /var/lib/dpkg/lock-frontend on first boot.
+echo "[setup] waiting for dpkg lock..."
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl stop unattended-upgrades 2>/dev/null || true
+fi
+timeout=120
+elapsed=0
+while ! flock -n /var/lib/dpkg/lock-frontend -c true 2>/dev/null; do
+    if [[ $elapsed -ge $timeout ]]; then
+        echo "[setup] ERROR: dpkg lock not released after ${timeout}s" >&2
+        exit 1
+    fi
+    echo "[setup] dpkg lock held, retrying in 5s..."
+    sleep 5
+    elapsed=$((elapsed + 5))
+done
+echo "[setup] dpkg lock acquired."
+
 apt update
 
 for pkg in python3-numpy python3-opencv v4l-utils; do
