@@ -512,6 +512,12 @@ class LineFollowComplexNode(Node):
                     self.update_pose(TURN_LEFT if self.spinning_direction == 'left' else TURN_RIGHT)
                 else:
                     self.get_logger().debug('Detected line but waiting for stable reacquire')
+            else:
+                # Default line-following behavior when not spinning or executing policy
+                motor_commands = compute_motor_commands(offset, w)
+                if not (self.pi is not None and self.at_intersection and not self.previous_at_intersection):
+                    # Only apply line-following if we're not in the middle of a policy action
+                    self.set_motor_command(motor_commands[0], motor_commands[1], motor_commands[2])
         else:
             self.consecutive_line_lost_frames += 1
             self.consecutive_line_detect_frames = 0
@@ -522,6 +528,9 @@ class LineFollowComplexNode(Node):
                     self.line_lost_during_turn = True
                     self.get_logger().debug('Line considered lost after 3 missed frames')
                 self.request_spin(self.spinning_direction)
+            elif self.Ab is not None:
+                # Stop if line is lost and not spinning
+                self.Ab.stop()
         
         # Check for intersection (simplified: check if line is centered/wide)
         # In a real system, this would use IR sensors or detect wide white area
