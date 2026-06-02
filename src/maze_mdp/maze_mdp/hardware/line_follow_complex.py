@@ -62,7 +62,13 @@ MAX_STEPS_DEFAULT = 200
 POLICY_FILE_DEFAULT = 'policy.npz'
 INTERSECTION_THRESHOLD = 900  # Sensor value threshold for intersection detection
 RAW_IMAGE_TOPICS = ('/alphabot2/image_raw', '/image_raw', '/image/raw')
-COMPRESSED_IMAGE_TOPICS = ('/alphabot2/image/compressed', '/image/compressed')
+COMPRESSED_IMAGE_TOPICS = (
+    '/alphabot2/image/compressed',
+    '/image/compressed',
+    '/alphabot2/image_raw/compressed',
+    '/image_raw/compressed',
+    '/image/raw/compressed',
+)
 
 # Continuous spin configuration (from complex_camera.py)
 SPIN_SPEED = 6
@@ -320,6 +326,7 @@ class LineFollowComplexNode(Node):
         self.last_motor_command = None
         self.last_motor_log_time = 0.0
         self.last_policy_wait_log_time = 0.0
+        self.last_graph_debug_time = 0.0
 
         # Load config
         self.maze_rows = config['maze_rows']
@@ -432,6 +439,18 @@ class LineFollowComplexNode(Node):
             f'steps={self.steps_taken}/{self.max_steps} done={self.done} '
             f'intersection={intersection_state} line={line_state} {motion_state}'
         )
+
+        # If callbacks are never firing, inspect ROS graph publisher visibility.
+        if self.frames_received == 0 and (now - self.last_graph_debug_time) >= 6.0:
+            self.last_graph_debug_time = now
+            topic_counts = []
+            for topic in RAW_IMAGE_TOPICS + COMPRESSED_IMAGE_TOPICS:
+                try:
+                    count = len(self.get_publishers_info_by_topic(topic))
+                except Exception:
+                    count = -1
+                topic_counts.append(f'{topic}:{count}')
+            self.get_logger().info('Camera graph publishers: ' + ', '.join(topic_counts))
 
     def _log_policy_wait_reason(self, reason: str):
         now = time.monotonic()
