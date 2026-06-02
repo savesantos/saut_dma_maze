@@ -45,6 +45,21 @@ CYCLONEDDS_URI="${CYCLONEDDS_URI:-}"
 FASTRTPS_DEFAULT_PROFILES_FILE="${FASTRTPS_DEFAULT_PROFILES_FILE:-}"
 ROS_DISCOVERY_SERVER="${ROS_DISCOVERY_SERVER:-}"
 
+REMOTE_BASE_ENV="PATH=\$PATH ROS_DOMAIN_ID=$ROS_DOMAIN_ID ROS_LOCALHOST_ONLY=$ROS_LOCALHOST_ONLY"
+if [[ -n "$RMW_IMPLEMENTATION" ]]; then
+  REMOTE_BASE_ENV+=" RMW_IMPLEMENTATION=$RMW_IMPLEMENTATION"
+fi
+if [[ -n "$CYCLONEDDS_URI" ]]; then
+  REMOTE_BASE_ENV+=" CYCLONEDDS_URI=$CYCLONEDDS_URI"
+fi
+if [[ -n "$FASTRTPS_DEFAULT_PROFILES_FILE" ]]; then
+  REMOTE_BASE_ENV+=" FASTRTPS_DEFAULT_PROFILES_FILE=$FASTRTPS_DEFAULT_PROFILES_FILE"
+fi
+if [[ -n "$ROS_DISCOVERY_SERVER" ]]; then
+  REMOTE_BASE_ENV+=" ROS_DISCOVERY_SERVER=$ROS_DISCOVERY_SERVER"
+fi
+REMOTE_RUN_ENV="$REMOTE_BASE_ENV CAMERA_BACKEND=$CAMERA_BACKEND"
+
 echo "[run-complex] robot: $ROBOT_HOST"
 echo "[run-complex] defaults: rows=$ROWS cols=$COLS row=$START_ROW col=$START_COL heading=$START_HEADING"
 echo "[run-complex] goal: row=$GOAL_ROW col=$GOAL_COL"
@@ -79,8 +94,8 @@ echo "[run-complex] starting line_follow_complex.py on robot"
 # Keep sudo so GPIO/NeoPixel-dependent code can access privileged devices.
 # Source ROS first because line_follow_complex.py imports rclpy and ROS messages.
 echo "[run-complex] preflight: checking image topics from same sudo ROS env"
-ssh -t "$ROBOT_HOST" "sudo -E env PATH=\$PATH ROS_DOMAIN_ID=$ROS_DOMAIN_ID ROS_LOCALHOST_ONLY=$ROS_LOCALHOST_ONLY RMW_IMPLEMENTATION=$RMW_IMPLEMENTATION CYCLONEDDS_URI='$CYCLONEDDS_URI' FASTRTPS_DEFAULT_PROFILES_FILE='$FASTRTPS_DEFAULT_PROFILES_FILE' ROS_DISCOVERY_SERVER='$ROS_DISCOVERY_SERVER' bash -lc 'source /opt/ros/humble/setup.bash && echo [preflight] topic list: && ros2 topic list | grep -E image\\|camera || true && echo [preflight] /alphabot2/image_raw: && ros2 topic info /alphabot2/image_raw || true && echo [preflight] /alphabot2/image_raw/compressed: && ros2 topic info /alphabot2/image_raw/compressed || true && echo [preflight] /image/compressed: && ros2 topic info /image/compressed || true'"
-ssh -t "$ROBOT_HOST" "cd $REMOTE_DIR && sudo -E env PATH=\$PATH CAMERA_BACKEND=$CAMERA_BACKEND ROS_DOMAIN_ID=$ROS_DOMAIN_ID ROS_LOCALHOST_ONLY=$ROS_LOCALHOST_ONLY RMW_IMPLEMENTATION=$RMW_IMPLEMENTATION CYCLONEDDS_URI='$CYCLONEDDS_URI' FASTRTPS_DEFAULT_PROFILES_FILE='$FASTRTPS_DEFAULT_PROFILES_FILE' ROS_DISCOVERY_SERVER='$ROS_DISCOVERY_SERVER' bash -lc 'source /opt/ros/humble/setup.bash && python3 line_follow_complex.py \
+ssh -t "$ROBOT_HOST" "sudo -E env $REMOTE_BASE_ENV bash -lc 'source /opt/ros/humble/setup.bash && echo [preflight] topic list: && ros2 topic list | grep -E image\\|camera || true && echo [preflight] /alphabot2/image_raw: && ros2 topic info /alphabot2/image_raw || true && echo [preflight] /alphabot2/image_raw/compressed: && ros2 topic info /alphabot2/image_raw/compressed || true && echo [preflight] /image/compressed: && ros2 topic info /image/compressed || true'"
+ssh -t "$ROBOT_HOST" "cd $REMOTE_DIR && sudo -E env $REMOTE_RUN_ENV bash -lc 'source /opt/ros/humble/setup.bash && python3 line_follow_complex.py \
   --policy $REMOTE_POLICY_FILE \
   --rows $ROWS --cols $COLS \
   --row $START_ROW --col $START_COL --heading $START_HEADING \

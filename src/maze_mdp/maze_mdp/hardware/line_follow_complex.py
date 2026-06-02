@@ -1,6 +1,7 @@
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
 
 from sensor_msgs.msg import Image, CompressedImage
 from cv_bridge import CvBridge
@@ -327,6 +328,7 @@ class LineFollowComplexNode(Node):
         self.last_motor_log_time = 0.0
         self.last_policy_wait_log_time = 0.0
         self.last_graph_debug_time = 0.0
+        self.last_qos_debug_time = 0.0
 
         # Load config
         self.maze_rows = config['maze_rows']
@@ -365,19 +367,40 @@ class LineFollowComplexNode(Node):
         else:
             self.Ab = None
 
-        self._raw_image_subscriptions = [
-            self.create_subscription(Image, topic, self.image_callback, qos_profile_sensor_data)
-            for topic in RAW_IMAGE_TOPICS
-        ]
-        self._compressed_image_subscriptions = [
-            self.create_subscription(CompressedImage, topic, self.compressed_image_callback, qos_profile_sensor_data)
-            for topic in COMPRESSED_IMAGE_TOPICS
-        ]
+        qos_reliable = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=20,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.VOLATILE,
+        )
+
+        self._raw_image_subscriptions = []
+        self._compressed_image_subscriptions = []
+
+        for topic in RAW_IMAGE_TOPICS:
+            self._raw_image_subscriptions.append(
+                self.create_subscription(Image, topic, self.image_callback, qos_profile_sensor_data)
+            )
+            self._raw_image_subscriptions.append(
+                self.create_subscription(Image, topic, self.image_callback, qos_reliable)
+            )
+
+        for topic in COMPRESSED_IMAGE_TOPICS:
+            self._compressed_image_subscriptions.append(
+                self.create_subscription(CompressedImage, topic, self.compressed_image_callback, qos_profile_sensor_data)
+            )
+            self._compressed_image_subscriptions.append(
+                self.create_subscription(CompressedImage, topic, self.compressed_image_callback, qos_reliable)
+            )
         self.get_logger().info(
             f'Subscribed to raw image topics: {", ".join(RAW_IMAGE_TOPICS)}'
         )
         self.get_logger().info(
             f'Subscribed to compressed image topics: {", ".join(COMPRESSED_IMAGE_TOPICS)}'
+        )
+        self.get_logger().info(
+            f'Created camera subscriptions: raw={len(self._raw_image_subscriptions)} '
+            f'compressed={len(self._compressed_image_subscriptions)} (best-effort + reliable)'
         )
         self.get_logger().info(
             'Config: '
@@ -451,6 +474,29 @@ class LineFollowComplexNode(Node):
                     count = -1
                 topic_counts.append(f'{topic}:{count}')
             self.get_logger().info('Camera graph publishers: ' + ', '.join(topic_counts))
+
+        if self.frames_received == 0 and (now - self.last_qos_debug_time) >= 10.0:
+            self.last_qos_debug_time = now
+            self._log_camera_offer_qos()
+
+    def _log_camera_offer_qos(self):
+        for topic in RAW_IMAGE_TOPICS + COMPRESSED_IMAGE_TOPICS:
+            try:
+                infos = self.get_publishers_info_by_topic(topic)
+            except Exception as exc:
+                self.get_logger().warning(f'Could not inspect QoS offers for {topic}: {exc}')
+                continue
+
+            if not infos:
+                continue
+
+            for idx, info in enumerate(infos):
+                qos = info.qos_profile
+                self.get_logger().info(
+                    f'QoS offer topic={topic} pub#{idx} '
+                    f'reliability={qos.reliability} durability={qos.durability} '
+                    f'history={qos.history} depth={qos.depth}'
+                )
 
     def _log_policy_wait_reason(self, reason: str):
         now = time.monotonic()
