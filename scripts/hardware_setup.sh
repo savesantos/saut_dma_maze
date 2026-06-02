@@ -51,37 +51,26 @@ ssh "$ROBOT_HOST" "mkdir -p $REMOTE_DIR"
 if [[ "$INSTALL_DEPS" == "1" ]]; then
     echo "[setup] installing python deps on robot (sudo may prompt for password)..."
     # Force a pseudo-terminal so sudo can read the password interactively.
-    # Install deps one-by-one so missing camera packages do not abort setup.
-    ssh -tt "$ROBOT_HOST" "bash -s" <<'REMOTE_SETUP'
+    # Use a single remote command to avoid heredoc/TTY edge cases.
+    ssh -tt "$ROBOT_HOST" "bash -lc '
 set -euo pipefail
 
 sudo apt update
 
 for pkg in python3-numpy python3-picamera2 python3-libcamera; do
-    if apt-cache show "$pkg" >/dev/null 2>&1; then
-        echo "[setup] installing apt package: $pkg"
-        sudo apt install -y "$pkg"
+    if apt-cache show \"\$pkg\" >/dev/null 2>&1; then
+        echo \"[setup] installing apt package: \$pkg\"
+        sudo apt install -y \"\$pkg\"
     else
-        echo "[setup] WARNING: apt package not available on this image: $pkg"
+        echo \"[setup] WARNING: apt package not available on this image: \$pkg\"
     fi
 done
 
-python3 - <<'PY'
-import importlib.util
-
-missing = [
-    name for name in ("picamera2", "libcamera", "numpy")
-    if importlib.util.find_spec(name) is None
-]
-
-if missing:
-    print("[setup] WARNING: missing Python modules after apt install: {}"
-          .format(", ".join(missing)))
-    print("[setup] camera alignment may be unavailable until these modules are installed.")
-else:
-    print("[setup] Python module check passed: picamera2, libcamera, numpy")
-PY
-REMOTE_SETUP
+python3 -c \"import importlib.util; missing=[n for n in ('picamera2','libcamera','numpy') if importlib.util.find_spec(n) is None];\
+print('[setup] WARNING: missing Python modules after apt install: {}'.format(', '.join(missing))) if missing else print('[setup] Python module check passed: picamera2, libcamera, numpy');\
+print('[setup] camera alignment may be unavailable until these modules are installed.') if missing else None\"
+'
+"
 fi
 
 echo "[setup] copying runner + policy to robot..."
