@@ -1,6 +1,5 @@
 import rclpy
 from rclpy.node import Node
-from rclpy.exceptions import RCLError
 
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
@@ -725,7 +724,7 @@ def main(args=None):
         node.destroy_node()
         try:
             rclpy.shutdown()
-        except RCLError:
+        except Exception:
             # Shutdown may already be in progress after Ctrl+C.
             pass
         cv2.destroyAllWindows()
