@@ -37,7 +37,9 @@ echo "[run] robot: $ROBOT_HOST"
 echo "[run] defaults: rows=$ROWS cols=$COLS row=$START_ROW col=$START_COL heading=$START_HEADING"
 
 echo "[run] command will execute on the robot in $REMOTE_DIR"
-ssh "$ROBOT_HOST" "cd $REMOTE_DIR && python3 line_follow_policy.py \
+# sudo is required by rpi_ws281x for /dev/mem access (NeoPixel ring).
+# The script degrades gracefully without LEDs if sudo is unavailable.
+ssh -t "$ROBOT_HOST" "cd $REMOTE_DIR && sudo python3 line_follow_policy.py \
   --policy $POLICY_FILE \
   --rows $ROWS --cols $COLS \
   --row $START_ROW --col $START_COL --heading $START_HEADING \

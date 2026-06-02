@@ -192,12 +192,20 @@ def state_index(r, c, h):
 
 
 # Neopixel ring (same colors as the reference script).
-strip = Adafruit_NeoPixel(LED_COUNT, LED_PIN, LED_FREQ_HZ, LED_DMA,
-                          LED_INVERT, LED_BRIGHTNESS)
-strip.begin()
-for i in range(4):
-    strip.setPixelColor(i, Color(100, 100, 100))
-strip.show()
+# Initialisation requires /dev/mem access (root).  Degrade gracefully if
+# the script is run as a non-root user so the rest of the policy execution
+# can still proceed without LED feedback.
+try:
+    strip = Adafruit_NeoPixel(LED_COUNT, LED_PIN, LED_FREQ_HZ, LED_DMA,
+                              LED_INVERT, LED_BRIGHTNESS)
+    strip.begin()
+    for i in range(4):
+        strip.setPixelColor(i, Color(100, 100, 100))
+    strip.show()
+except RuntimeError as _led_err:
+    print('[led] NeoPixel unavailable ({}); continuing without LEDs.'
+          .format(_led_err))
+    strip = None
 
 TR = TRSensor()
 Ab = AlphaBot2()
@@ -273,18 +281,20 @@ while True:
 
             if done or steps_taken >= args.max_steps:
                 Ab.stop()
-                for i in range(4):
-                    strip.setPixelColor(i, Color(0, 0, 100))
-                strip.show()
+                if strip is not None:
+                    for i in range(4):
+                        strip.setPixelColor(i, Color(0, 0, 100))
+                    strip.show()
                 print('Stopping (done={}, steps={}).'.format(done, steps_taken))
                 break
 
             if (robot_row, robot_col) == goal_cell:
                 done = True
                 Ab.stop()
-                for i in range(4):
-                    strip.setPixelColor(i, Color(0, 0, 100))
-                strip.show()
+                if strip is not None:
+                    for i in range(4):
+                        strip.setPixelColor(i, Color(0, 0, 100))
+                    strip.show()
                 print('Goal reached at ({},{}).'.format(robot_row, robot_col))
                 break
 
@@ -329,9 +339,10 @@ while True:
                 Ab.stop()
                 break
 
-            for i in range(4):
-                strip.setPixelColor(i, Color(100, 0, 0))
-            strip.show()
+            if strip is not None:
+                for i in range(4):
+                    strip.setPixelColor(i, Color(100, 0, 0))
+                strip.show()
         else:
             # PID line-following, verbatim from the reference.
             proportional = position - 2000
@@ -354,9 +365,10 @@ while True:
             else:
                 Ab.setPWMA(0.5 * maximum)
                 Ab.setPWMB(0.5 * (maximum - power_difference))
-                for i in range(4):
-                    strip.setPixelColor(i, Color(0, 100, 0))
-                strip.show()
+                if strip is not None:
+                    for i in range(4):
+                        strip.setPixelColor(i, Color(0, 100, 0))
+                    strip.show()
 
     except KeyboardInterrupt:
         Ab.stop()
