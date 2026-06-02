@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Prepare the AlphaBot2 Raspberry Pi for policy execution on hardware.
 #
-# Copies the robot-side runner + camera helper + one policy bundle to the Pi.
+# Copies the robot-side runners + camera helper + one policy bundle to the Pi.
 # Defaults target the 7x7 rooms maze artifact layout.
 #
 # Usage:
@@ -39,9 +39,10 @@ if [[ ! -f "$POLICY_PATH" ]]; then
 fi
 
 RUNNER_PATH="src/maze_mdp/maze_mdp/hardware/line_follow_policy.py"
+COMPLEX_RUNNER_PATH="src/maze_mdp/maze_mdp/hardware/line_follow_complex.py"
 ALIGNER_PATH="src/maze_mdp/maze_mdp/hardware/camera_align.py"
 
-if [[ ! -f "$RUNNER_PATH" || ! -f "$ALIGNER_PATH" ]]; then
+if [[ ! -f "$RUNNER_PATH" || ! -f "$COMPLEX_RUNNER_PATH" || ! -f "$ALIGNER_PATH" ]]; then
     echo "ERROR: hardware runner files not found under src/maze_mdp/maze_mdp/hardware/." >&2
     exit 1
 fi
@@ -205,9 +206,10 @@ REMOTE_SETUP
     fi
 fi
 
-echo "[setup] copying runner + policy to robot..."
+echo "[setup] copying runners + policy to robot..."
 scp \
     "$RUNNER_PATH" \
+    "$COMPLEX_RUNNER_PATH" \
     "$ALIGNER_PATH" \
     "$POLICY_PATH" \
     "$ROBOT_HOST:$REMOTE_DIR"
