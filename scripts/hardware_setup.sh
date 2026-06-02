@@ -80,7 +80,7 @@ done
 echo "[setup] dpkg lock acquired."
 
 # Build list of packages that are NOT already installed.
-all_pkgs=(python3-numpy python3-opencv v4l-utils python3-picamera2 python3-libcamera)
+all_pkgs=(python3-numpy python3-opencv v4l-utils python3-picamera2 python3-libcamera python3-rpi.gpio)
 to_install=()
 for pkg in "${all_pkgs[@]}"; do
     if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then
@@ -104,6 +104,11 @@ if [[ ${#to_install[@]} -gt 0 ]]; then
 else
     echo "[setup] all apt packages already present, skipping apt update."
 fi
+
+# Install pip packages needed by the hardware runner.
+echo "[setup] installing pip packages..."
+pip3 install --upgrade pip setuptools wheel >/dev/null 2>&1 || true
+pip3 install rpi-ws281x adafruit-circuitpython-neopixel >/dev/null 2>&1 || true
 
 python3 - <<'PY'
 import importlib.util
