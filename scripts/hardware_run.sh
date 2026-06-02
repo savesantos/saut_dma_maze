@@ -37,9 +37,11 @@ echo "[run] robot: $ROBOT_HOST"
 echo "[run] defaults: rows=$ROWS cols=$COLS row=$START_ROW col=$START_COL heading=$START_HEADING"
 
 echo "[run] command will execute on the robot in $REMOTE_DIR"
-# sudo is required by rpi_ws281x for /dev/mem access (NeoPixel ring).
+# rpi_ws281x needs /dev/mem access (root) for the NeoPixel ring.
+# We use 'sudo env PATH=...' so sudo picks up the same python3 (and
+# site-packages) as the deec user, not the bare system interpreter.
 # The script degrades gracefully without LEDs if sudo is unavailable.
-ssh -t "$ROBOT_HOST" "cd $REMOTE_DIR && sudo python3 line_follow_policy.py \
+ssh -t "$ROBOT_HOST" "cd $REMOTE_DIR && sudo env PATH=\$PATH \$(which python3) line_follow_policy.py \
   --policy $POLICY_FILE \
   --rows $ROWS --cols $COLS \
   --row $START_ROW --col $START_COL --heading $START_HEADING \
