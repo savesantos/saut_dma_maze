@@ -383,6 +383,11 @@ class LineFollowComplexNode(Node):
             f'throttle_mode={THROTTLE_MODE} process_every_n={PROCESS_EVERY_N_FRAMES} '
             f'max_fps={MAX_PROCESS_FPS}'
         )
+        self.get_logger().info(
+            'ROS env: '
+            f'ROS_DOMAIN_ID={os.environ.get("ROS_DOMAIN_ID", "unset")} '
+            f'ROS_LOCALHOST_ONLY={os.environ.get("ROS_LOCALHOST_ONLY", "unset")}'
+        )
 
         self.publisher = self.create_publisher(
             Image,

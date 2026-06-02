@@ -34,10 +34,18 @@ MAX_STEPS="${MAX_STEPS:-200}"
 CAMERA_BACKEND="${CAMERA_BACKEND:-opencv}"
 LOCAL_COMPLEX_RUNNER="src/maze_mdp/maze_mdp/hardware/line_follow_complex.py"
 
+# ROS 2 discovery domain: default to robot IP last octet unless explicitly set.
+if [[ -z "${ROS_DOMAIN_ID:-}" ]]; then
+  ROBOT_IP="${ROBOT_HOST##*@}"
+  ROS_DOMAIN_ID="${ROBOT_IP##*.}"
+fi
+ROS_LOCALHOST_ONLY="${ROS_LOCALHOST_ONLY:-0}"
+
 echo "[run-complex] robot: $ROBOT_HOST"
 echo "[run-complex] defaults: rows=$ROWS cols=$COLS row=$START_ROW col=$START_COL heading=$START_HEADING"
 echo "[run-complex] goal: row=$GOAL_ROW col=$GOAL_COL"
 echo "[run-complex] camera backend preference: $CAMERA_BACKEND"
+echo "[run-complex] ROS_DOMAIN_ID=$ROS_DOMAIN_ID ROS_LOCALHOST_ONLY=$ROS_LOCALHOST_ONLY"
 
 if [[ ! -f "$LOCAL_COMPLEX_RUNNER" ]]; then
   echo "ERROR: local runner not found: $LOCAL_COMPLEX_RUNNER" >&2
@@ -60,7 +68,7 @@ fi
 echo "[run-complex] starting line_follow_complex.py on robot"
 # Keep sudo so GPIO/NeoPixel-dependent code can access privileged devices.
 # Source ROS first because line_follow_complex.py imports rclpy and ROS messages.
-ssh -t "$ROBOT_HOST" "cd $REMOTE_DIR && sudo -E env PATH=\$PATH CAMERA_BACKEND=$CAMERA_BACKEND bash -lc 'source /opt/ros/humble/setup.bash && python3 line_follow_complex.py \
+ssh -t "$ROBOT_HOST" "cd $REMOTE_DIR && sudo -E env PATH=\$PATH CAMERA_BACKEND=$CAMERA_BACKEND ROS_DOMAIN_ID=$ROS_DOMAIN_ID ROS_LOCALHOST_ONLY=$ROS_LOCALHOST_ONLY bash -lc 'source /opt/ros/humble/setup.bash && python3 line_follow_complex.py \
   --policy $REMOTE_POLICY_FILE \
   --rows $ROWS --cols $COLS \
   --row $START_ROW --col $START_COL --heading $START_HEADING \
