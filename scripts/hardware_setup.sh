@@ -59,7 +59,7 @@ set -euo pipefail
 
 apt update
 
-for pkg in python3-numpy; do
+for pkg in python3-numpy python3-opencv v4l-utils; do
     if apt-cache show "$pkg" >/dev/null 2>&1; then
         echo "[setup] installing apt package: $pkg"
         apt install -y "$pkg"
@@ -78,49 +78,28 @@ for pkg in python3-picamera2 python3-libcamera; do
     fi
 done
 
-# Ubuntu images often miss picamera2/libcamera python bindings in apt.
-# Fallback to pip for picamera2 and libcamera if still absent.
-PIP_INSTALL_ARGS=(install)
-if python3 -m pip install --help 2>/dev/null | grep -q -- '--break-system-packages'; then
-    PIP_INSTALL_ARGS+=(--break-system-packages)
-fi
-
-if ! python3 - <<'PY'
-import importlib.util
-import sys
-sys.exit(0 if importlib.util.find_spec("picamera2") is not None else 1)
-PY
-then
-    echo "[setup] attempting pip fallback for picamera2..."
-    apt install -y python3-pip python3-wheel || true
-    python3 -m pip "${PIP_INSTALL_ARGS[@]}" --upgrade pip setuptools wheel || true
-    python3 -m pip "${PIP_INSTALL_ARGS[@]}" picamera2 || true
-fi
-
-if ! python3 - <<'PY'
-import importlib.util
-import sys
-sys.exit(0 if importlib.util.find_spec("libcamera") is not None else 1)
-PY
-then
-    echo "[setup] attempting pip fallback for libcamera..."
-    python3 -m pip "${PIP_INSTALL_ARGS[@]}" libcamera || true
-fi
-
 python3 - <<'PY'
 import importlib.util
 
-missing = [
-    name for name in ("picamera2", "libcamera", "numpy")
-    if importlib.util.find_spec(name) is None
-]
+has_numpy = importlib.util.find_spec("numpy") is not None
+has_picamera = importlib.util.find_spec("picamera2") is not None
+has_libcamera = importlib.util.find_spec("libcamera") is not None
+has_cv2 = importlib.util.find_spec("cv2") is not None
+
+camera_ok = (has_picamera and has_libcamera) or has_cv2
+missing = []
+if not has_numpy:
+    missing.append("numpy")
+if not camera_ok:
+    missing.append("camera_backend(picamera2+libcamera or cv2)")
 
 if missing:
-    print("[setup] WARNING: missing Python modules after apt install: {}"
+    print("[setup] WARNING: missing required Python modules after apt install: {}"
           .format(", ".join(missing)))
     print("[setup] camera alignment may be unavailable until these modules are installed.")
 else:
-    print("[setup] Python module check passed: picamera2, libcamera, numpy")
+    backend = "picamera2/libcamera" if (has_picamera and has_libcamera) else "opencv(cv2)"
+    print("[setup] Python module check passed: numpy + {}".format(backend))
 
 # Exit non-zero so caller can fail fast when camera is required.
 if missing:

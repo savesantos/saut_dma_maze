@@ -24,13 +24,17 @@ Camera geometry matches the Gazebo URDF
 
 The line extraction routine :func:`estimate_line_from_frame` is pure
 numpy (no OpenCV / no picamera2) so it is safe to import from a ROS
-node running on the laptop. The :class:`CameraAligner` wrapper does
-require ``picamera2`` because it talks directly to the Pi camera; the
-import is lazy so this module loads cleanly without it.
+node running on the laptop. The :class:`CameraAligner` wrapper uses
+``picamera2`` when available, and otherwise falls back to OpenCV's
+``VideoCapture`` backend.
 
 Dependencies on the Pi (install once)::
 
     sudo apt install python3-picamera2 python3-libcamera python3-numpy
+
+or, if picamera2/libcamera packages are unavailable on the image::
+
+    sudo apt install python3-opencv python3-numpy
 """
 
 from __future__ import annotations
@@ -48,6 +52,14 @@ try:  # pragma: no cover - only available on the Pi
 except Exception as exc:  # pragma: no cover
     _PICAMERA2_AVAILABLE = False
     _PICAMERA2_IMPORT_ERROR = exc
+
+try:  # pragma: no cover - optional backend on Ubuntu images
+    import cv2  # type: ignore
+    _OPENCV_AVAILABLE = True
+    _OPENCV_IMPORT_ERROR: BaseException | None = None
+except Exception as exc:  # pragma: no cover
+    _OPENCV_AVAILABLE = False
+    _OPENCV_IMPORT_ERROR = exc
 
 
 # Camera geometry, mirroring the Gazebo URDF.
@@ -192,39 +204,76 @@ class CameraAligner:
         self._theta_offset = float(theta_offset)
         self._debug_dir = debug_dir
         self._cam = None
+        self._backend = None
         self._frame_idx = 0
 
     def start(self) -> bool:
-        if not _PICAMERA2_AVAILABLE:
+        if _PICAMERA2_AVAILABLE:
+            try:
+                cam = Picamera2()
+                config = cam.create_video_configuration(
+                    main={'size': (_IMG_W, _IMG_H), 'format': 'RGB888'})
+                cam.configure(config)
+                cam.start()
+                time.sleep(0.3)
+                self._cam = cam
+                self._backend = 'picamera2'
+                print('[camera_align] camera backend: picamera2')
+                return True
+            except Exception as exc:  # pragma: no cover
+                print('[camera_align] picamera2 start failed: {}'.format(exc))
+                self._cam = None
+                self._backend = None
+        else:
             print('[camera_align] picamera2 not available: {}'
                   .format(_PICAMERA2_IMPORT_ERROR))
-            return False
-        try:
-            cam = Picamera2()
-            config = cam.create_video_configuration(
-                main={'size': (_IMG_W, _IMG_H), 'format': 'RGB888'})
-            cam.configure(config)
-            cam.start()
-            time.sleep(0.3)
-            self._cam = cam
-            return True
-        except Exception as exc:  # pragma: no cover
-            print('[camera_align] failed to start camera: {}'.format(exc))
-            self._cam = None
-            return False
+
+        if _OPENCV_AVAILABLE:
+            try:
+                cam = cv2.VideoCapture(0)
+                cam.set(cv2.CAP_PROP_FRAME_WIDTH, _IMG_W)
+                cam.set(cv2.CAP_PROP_FRAME_HEIGHT, _IMG_H)
+                if not cam.isOpened():
+                    raise RuntimeError('cv2.VideoCapture(0) could not open')
+                time.sleep(0.2)
+                self._cam = cam
+                self._backend = 'opencv'
+                print('[camera_align] camera backend: opencv')
+                return True
+            except Exception as exc:  # pragma: no cover
+                print('[camera_align] opencv start failed: {}'.format(exc))
+                self._cam = None
+                self._backend = None
+        else:
+            print('[camera_align] opencv not available: {}'
+                  .format(_OPENCV_IMPORT_ERROR))
+
+        return False
 
     def stop(self) -> None:
         if self._cam is not None:
             try:
-                self._cam.stop()
+                if self._backend == 'picamera2':
+                    self._cam.stop()
+                elif self._backend == 'opencv':
+                    self._cam.release()
             except Exception:
                 pass
             self._cam = None
+            self._backend = None
 
     def grab_estimate(self) -> FrameEstimate:
         if self._cam is None:
             return FrameEstimate(valid=False)
-        frame = self._cam.capture_array()
+        if self._backend == 'picamera2':
+            frame = self._cam.capture_array()
+        elif self._backend == 'opencv':
+            ok, frame_bgr = self._cam.read()
+            if not ok:
+                return FrameEstimate(valid=False)
+            frame = frame_bgr[..., ::-1]
+        else:
+            return FrameEstimate(valid=False)
         est = estimate_line_from_frame(
             frame,
             image_center_col=self._image_center_col,
