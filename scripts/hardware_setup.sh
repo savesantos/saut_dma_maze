@@ -80,6 +80,11 @@ done
 
 # Ubuntu images often miss picamera2/libcamera python bindings in apt.
 # Fallback to pip for picamera2 and libcamera if still absent.
+PIP_INSTALL_ARGS=(install)
+if python3 -m pip install --help 2>/dev/null | grep -q -- '--break-system-packages'; then
+    PIP_INSTALL_ARGS+=(--break-system-packages)
+fi
+
 if ! python3 - <<'PY'
 import importlib.util
 import sys
@@ -88,8 +93,8 @@ PY
 then
     echo "[setup] attempting pip fallback for picamera2..."
     apt install -y python3-pip python3-wheel || true
-    python3 -m pip install --break-system-packages --upgrade pip setuptools wheel || true
-    python3 -m pip install --break-system-packages picamera2 || true
+    python3 -m pip "${PIP_INSTALL_ARGS[@]}" --upgrade pip setuptools wheel || true
+    python3 -m pip "${PIP_INSTALL_ARGS[@]}" picamera2 || true
 fi
 
 if ! python3 - <<'PY'
@@ -99,7 +104,7 @@ sys.exit(0 if importlib.util.find_spec("libcamera") is not None else 1)
 PY
 then
     echo "[setup] attempting pip fallback for libcamera..."
-    python3 -m pip install --break-system-packages libcamera || true
+    python3 -m pip "${PIP_INSTALL_ARGS[@]}" libcamera || true
 fi
 
 python3 - <<'PY'
