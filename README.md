@@ -89,6 +89,79 @@ bash scripts/make_all_figures.sh
 
 See [docs/usage.md](docs/usage.md) for RViz visualization, side-by-side algorithm comparison, headless variants, and hardware deployment.
 
+## Hardware step-by-step (AlphaBot2)
+
+The repository includes two helper scripts for robot-side execution:
+
+- `scripts/hardware_setup.sh` copies the runner and policy to the robot.
+- `scripts/hardware_run.sh` starts the run on the robot over SSH.
+
+Defaults are already configured for your current setup:
+
+- Robot host: `deec@10.16.140.69`
+- Maze size: `7x7`
+- Start pose: `row=0`, `col=0`, `heading=1` (East)
+- Goal cell: `row=6`, `col=0` (fixture_7x7_rooms)
+
+### 1. Open a terminal in the workspace root
+
+```bash
+cd /home/salva/saut_dma_maze
+```
+
+### 2. Ensure a policy exists (train if needed)
+
+If you already have a trained policy under `data/training/qlearning/fixture_7x7_rooms/`, skip this step.
+
+```bash
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+ros2 run maze_mdp train --algo qlearning --maze fixture_7x7_rooms --seed 0 --out data
+```
+
+### 3. Copy runner + policy to the robot
+
+```bash
+bash scripts/hardware_setup.sh
+```
+
+By default, this picks the latest run in `data/training/qlearning/fixture_7x7_rooms/` and uploads:
+
+- `line_follow_policy.py`
+- `camera_align.py`
+- `policy.npz`
+
+### 4. Start the hardware run
+
+```bash
+bash scripts/hardware_run.sh
+```
+
+### 5. Optional overrides
+
+Use environment variables when you want a different policy, maze geometry, or start pose.
+
+```bash
+# Example: run with an explicit policy file
+POLICY_PATH=data/training/qlearning/fixture_7x7_rooms/<run_id>/policy.npz \
+  bash scripts/hardware_setup.sh
+
+# Example: different start pose / limits
+START_ROW=0 START_COL=0 START_HEADING=1 MAX_STEPS=300 \
+  bash scripts/hardware_run.sh
+
+# Example: camera align debug frames
+EXTRA_ARGS='--camera-align-debug /tmp/align_frames' \
+  bash scripts/hardware_run.sh
+```
+
+### 6. If SSH user/host changes later
+
+```bash
+ROBOT_HOST=deec@10.16.140.70 bash scripts/hardware_setup.sh
+ROBOT_HOST=deec@10.16.140.70 bash scripts/hardware_run.sh
+```
+
 ## Documentation map
 
 | Document | Purpose |
