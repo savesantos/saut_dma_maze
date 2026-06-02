@@ -50,9 +50,10 @@ ssh "$ROBOT_HOST" "mkdir -p $REMOTE_DIR"
 
 if [[ "$INSTALL_DEPS" == "1" ]]; then
     echo "[setup] installing python deps on robot (sudo may prompt for password)..."
-    # Force a pseudo-terminal so sudo can read the password interactively.
-    # Run a root-owned script over stdin to avoid nested shell quoting issues.
-    ssh -tt "$ROBOT_HOST" "sudo bash -s" <<'REMOTE_SETUP'
+    # Upload and execute a temporary remote script to avoid TTY/heredoc
+    # interactions that can echo script contents and confuse prompts.
+    tmp_setup_script="$(mktemp)"
+    cat >"$tmp_setup_script" <<'REMOTE_SETUP'
 set -euo pipefail
 
 apt update
@@ -82,6 +83,11 @@ else:
     print("[setup] Python module check passed: picamera2, libcamera, numpy")
 PY
 REMOTE_SETUP
+
+    remote_setup_path="/tmp/hardware_setup_deps_$$.sh"
+    scp "$tmp_setup_script" "$ROBOT_HOST:$remote_setup_path"
+    rm -f "$tmp_setup_script"
+    ssh -tt "$ROBOT_HOST" "chmod +x '$remote_setup_path' && sudo bash '$remote_setup_path'; rc=\$?; rm -f '$remote_setup_path'; exit \$rc"
 fi
 
 echo "[setup] copying runner + policy to robot..."
