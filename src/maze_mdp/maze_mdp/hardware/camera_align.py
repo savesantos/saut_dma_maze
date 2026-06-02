@@ -237,7 +237,7 @@ class CameraAligner:
             try:
                 # Suppress GStreamer/libv4l2 warnings when opening camera
                 os.environ['OPENCV_VIDEOIO_DEBUG'] = '0'
-                
+
                 cam = cv2.VideoCapture(0, cv2.CAP_V4L2)
                 # Set resolution before first frame capture
                 cam.set(cv2.CAP_PROP_FRAME_WIDTH, _IMG_W)
@@ -250,17 +250,17 @@ class CameraAligner:
                     pass
                 # Set a reasonable frame rate
                 cam.set(cv2.CAP_PROP_FPS, 15)
-                
+
                 # Verify camera opened successfully
                 if not cam.isOpened():
                     raise RuntimeError('cv2.VideoCapture(0) could not open')
-                
+
                 # Warm up the camera with a dummy capture
                 for _ in range(2):
                     ret, _ = cam.read()
                     if not ret:
                         raise RuntimeError('cv2 read() returned False')
-                
+
                 time.sleep(0.2)
                 self._cam = cam
                 self._backend = 'opencv'
@@ -270,13 +270,13 @@ class CameraAligner:
                 print('[camera_align] opencv start failed: {}'.format(exc))
                 self._cam = None
                 self._backend = None
-                elif allow_opencv:
+        elif allow_opencv:
             print('[camera_align] opencv not available: {}'
                   .format(_OPENCV_IMPORT_ERROR))
 
-                if backend_pref not in ('', 'auto', 'picamera2', 'opencv'):
-                        print('[camera_align] invalid CAMERA_BACKEND={} (expected auto|picamera2|opencv)'
-                                    .format(backend_pref))
+        if backend_pref not in ('', 'auto', 'picamera2', 'opencv'):
+            print('[camera_align] invalid CAMERA_BACKEND={} (expected auto|picamera2|opencv)'
+                  .format(backend_pref))
 
         return False
 
