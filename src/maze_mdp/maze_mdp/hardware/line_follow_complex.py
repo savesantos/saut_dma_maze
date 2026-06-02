@@ -1,5 +1,6 @@
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 
 from sensor_msgs.msg import Image, CompressedImage
 from cv_bridge import CvBridge
@@ -358,11 +359,11 @@ class LineFollowComplexNode(Node):
             self.Ab = None
 
         self._raw_image_subscriptions = [
-            self.create_subscription(Image, topic, self.image_callback, 10)
+            self.create_subscription(Image, topic, self.image_callback, qos_profile_sensor_data)
             for topic in RAW_IMAGE_TOPICS
         ]
         self._compressed_image_subscriptions = [
-            self.create_subscription(CompressedImage, topic, self.compressed_image_callback, 10)
+            self.create_subscription(CompressedImage, topic, self.compressed_image_callback, qos_profile_sensor_data)
             for topic in COMPRESSED_IMAGE_TOPICS
         ]
         self.get_logger().info(
