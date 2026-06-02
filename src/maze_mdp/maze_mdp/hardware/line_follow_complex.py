@@ -1,7 +1,7 @@
 import rclpy
 from rclpy.node import Node
 
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, CompressedImage
 from cv_bridge import CvBridge
 
 import os
@@ -60,7 +60,8 @@ GOAL_COL_DEFAULT = 0
 MAX_STEPS_DEFAULT = 200
 POLICY_FILE_DEFAULT = 'policy.npz'
 INTERSECTION_THRESHOLD = 900  # Sensor value threshold for intersection detection
-IMAGE_TOPICS = ('/alphabot2/image_raw', '/image_raw')
+RAW_IMAGE_TOPICS = ('/alphabot2/image_raw', '/image_raw', '/image/raw')
+COMPRESSED_IMAGE_TOPICS = ('/alphabot2/image/compressed', '/image/compressed')
 
 # Continuous spin configuration (from complex_camera.py)
 SPIN_SPEED = 6
@@ -306,6 +307,19 @@ class LineFollowComplexNode(Node):
         self.window_name = 'Line Follow Complex'
         self._active_image_topic = None
 
+        # Diagnostics state
+        self.start_time = time.monotonic()
+        self.frames_received = 0
+        self.frames_processed = 0
+        self.frames_throttled = 0
+        self.last_frame_time = None
+        self.last_processed_time = None
+        self.last_line_detected = None
+        self.last_intersection_state = None
+        self.last_motor_command = None
+        self.last_motor_log_time = 0.0
+        self.last_policy_wait_log_time = 0.0
+
         # Load config
         self.maze_rows = config['maze_rows']
         self.maze_cols = config['maze_cols']
@@ -343,12 +357,30 @@ class LineFollowComplexNode(Node):
         else:
             self.Ab = None
 
-        self._image_subscriptions = [
+        self._raw_image_subscriptions = [
             self.create_subscription(Image, topic, self.image_callback, 10)
-            for topic in IMAGE_TOPICS
+            for topic in RAW_IMAGE_TOPICS
+        ]
+        self._compressed_image_subscriptions = [
+            self.create_subscription(CompressedImage, topic, self.compressed_image_callback, 10)
+            for topic in COMPRESSED_IMAGE_TOPICS
         ]
         self.get_logger().info(
-            f'Subscribed to image topics: {", ".join(IMAGE_TOPICS)}'
+            f'Subscribed to raw image topics: {", ".join(RAW_IMAGE_TOPICS)}'
+        )
+        self.get_logger().info(
+            f'Subscribed to compressed image topics: {", ".join(COMPRESSED_IMAGE_TOPICS)}'
+        )
+        self.get_logger().info(
+            'Config: '
+            f'policy={self.policy_file} maze={self.maze_rows}x{self.maze_cols} '
+            f'start=({self.robot_row},{self.robot_col},{self.robot_heading}) '
+            f'goal=({self.goal_row},{self.goal_col}) max_steps={self.max_steps}'
+        )
+        self.get_logger().info(
+            'Frame processing: '
+            f'throttle_mode={THROTTLE_MODE} process_every_n={PROCESS_EVERY_N_FRAMES} '
+            f'max_fps={MAX_PROCESS_FPS}'
         )
 
         self.publisher = self.create_publisher(
@@ -366,6 +398,40 @@ class LineFollowComplexNode(Node):
             '/alphabot2/image_viz',
             10
         )
+
+        self.diag_timer = self.create_timer(2.0, self._diagnostics_tick)
+
+    def _diagnostics_tick(self):
+        now = time.monotonic()
+        age_frame = (now - self.last_frame_time) if self.last_frame_time is not None else None
+        age_processed = (now - self.last_processed_time) if self.last_processed_time is not None else None
+        line_state = 'unknown' if self.last_line_detected is None else ('detected' if self.last_line_detected else 'missing')
+        intersection_state = 'unknown' if self.at_intersection is None else str(self.at_intersection)
+        motion_state = (
+            f'spin={self.spinning_direction}'
+            if self.spinning_direction is not None
+            else 'spin=None'
+        )
+        age_frame_str = f'{age_frame:.2f}s' if age_frame is not None else 'n/a'
+        age_processed_str = f'{age_processed:.2f}s' if age_processed is not None else 'n/a'
+        self.get_logger().info(
+            f'Heartbeat: frames rx/proc/drop={self.frames_received}/{self.frames_processed}/{self.frames_throttled} '
+            f'last_frame_age={age_frame_str}'
+        )
+        self.get_logger().info(
+            f'Status: last_proc_age={age_processed_str}'
+        )
+        self.get_logger().info(
+            f'state=({self.robot_row},{self.robot_col},{self.robot_heading}) '
+            f'steps={self.steps_taken}/{self.max_steps} done={self.done} '
+            f'intersection={intersection_state} line={line_state} {motion_state}'
+        )
+
+    def _log_policy_wait_reason(self, reason: str):
+        now = time.monotonic()
+        if now - self.last_policy_wait_log_time >= 1.0:
+            self.last_policy_wait_log_time = now
+            self.get_logger().info(f'Policy waiting: {reason}')
 
     def load_policy(self):
         """Load policy from policy.npz file"""
@@ -402,7 +468,11 @@ class LineFollowComplexNode(Node):
         For turns, use camera-based burst spin instead of open-loop.
         """
         if self.Ab is None:
+            self.get_logger().warning('execute_action called but AlphaBot2 control is unavailable')
             return
+
+        action_map = {FORWARD: 'FORWARD', TURN_LEFT: 'TURN_LEFT', TURN_RIGHT: 'TURN_RIGHT'}
+        self.get_logger().info(f'Executing action: {action_map.get(action, str(action))}')
 
         if action == FORWARD:
             self.Ab.forward()
@@ -470,7 +540,15 @@ class LineFollowComplexNode(Node):
     def set_motor_command(self, pwm_a: int, pwm_b: int, direction: str):
         """Set motor speeds and direction"""
         if self.Ab is None:
+            self.get_logger().warning('set_motor_command skipped because AlphaBot2 control is unavailable')
             return
+
+        cmd = (pwm_a, pwm_b, direction)
+        now = time.monotonic()
+        if cmd != self.last_motor_command or (now - self.last_motor_log_time) >= 1.0:
+            self.last_motor_command = cmd
+            self.last_motor_log_time = now
+            self.get_logger().info(f'Motor command: dir={direction} pwm_a={pwm_a} pwm_b={pwm_b}')
 
         if direction == "forward":
             self.Ab.forward()
@@ -485,27 +563,24 @@ class LineFollowComplexNode(Node):
         self.Ab.setPWMA(pwm_a)
         self.Ab.setPWMB(pwm_b)
 
-    def image_callback(self, msg: Image):
-        if self._active_image_topic is None:
-            self._active_image_topic = msg.header.frame_id or 'unknown'
-            self.get_logger().info('Receiving camera frames; line follower is active')
-
+    def _should_process_frame(self) -> bool:
         self.frame_counter += 1
         if THROTTLE_MODE == 'count':
             if self.frame_counter % PROCESS_EVERY_N_FRAMES != 0:
-                return
+                self.frames_throttled += 1
+                return False
         else:
             now = self.get_clock().now().to_sec()
             if self.last_process_time is not None and \
                (now - self.last_process_time) < (1.0 / MAX_PROCESS_FPS):
-                return
+                self.frames_throttled += 1
+                return False
             self.last_process_time = now
+        return True
 
-        try:
-            frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
-        except Exception as e:
-            self.get_logger().error(f"Failed to convert image: {e}")
-            return
+    def _process_frame(self, header, frame: np.ndarray):
+        self.frames_processed += 1
+        self.last_processed_time = time.monotonic()
 
         if frame.shape[1] > RESIZE_MAX_WIDTH:
             scale = RESIZE_MAX_WIDTH / float(frame.shape[1])
@@ -528,6 +603,12 @@ class LineFollowComplexNode(Node):
         action_status = "No policy loaded"
 
         line_detected = len(midpoints) >= MIN_POINTS
+        if self.last_line_detected is None or self.last_line_detected != line_detected:
+            self.last_line_detected = line_detected
+            self.get_logger().info(
+                f'Line detection changed: detected={line_detected} midpoints={len(midpoints)}'
+            )
+
         if line_detected:
             self.consecutive_line_detect_frames += 1
             self.consecutive_line_lost_frames = 0
@@ -539,8 +620,13 @@ class LineFollowComplexNode(Node):
             # If spinning from a turn, check if line is stable before stopping
             if self.spinning_direction is not None:
                 if self.line_lost_during_turn and self.consecutive_line_detect_frames >= LINE_REACQUIRE_THRESHOLD:
+                    spin_direction = self.spinning_direction
                     self.stop_spin()
-                    self.update_pose(TURN_LEFT if self.spinning_direction == 'left' else TURN_RIGHT)
+                    self.update_pose(TURN_LEFT if spin_direction == 'left' else TURN_RIGHT)
+                    self.get_logger().info(
+                        f'Turn complete after line reacquire; updated pose to '
+                        f'({self.robot_row},{self.robot_col},{self.robot_heading})'
+                    )
                 else:
                     self.get_logger().debug('Detected line but waiting for stable reacquire')
             else:
@@ -561,17 +647,32 @@ class LineFollowComplexNode(Node):
                 self.request_spin(self.spinning_direction)
             elif self.Ab is not None:
                 # Stop if line is lost and not spinning
+                self.get_logger().info('Line lost while not spinning; stopping motors')
                 self.Ab.stop()
         
         # Check for intersection (simplified: check if line is centered/wide)
         # In a real system, this would use IR sensors or detect wide white area
         self.at_intersection = len(midpoints) == 0 or line_detected and (offset is not None and abs(offset) < 30)
+        if self.last_intersection_state is None or self.last_intersection_state != self.at_intersection:
+            self.last_intersection_state = self.at_intersection
+            self.get_logger().info(
+                f'Intersection state changed: at_intersection={self.at_intersection} '
+                f'offset={offset} midpoints={len(midpoints)}'
+            )
         
         # Execute policy action only at intersections and when not spinning
         if self.pi is not None and self.at_intersection and not self.previous_at_intersection:
             if self.spinning_direction is None:  # Only act if spin is complete
                 if not self.done and self.steps_taken < self.max_steps:
                     s = state_index(self.robot_row, self.robot_col, self.robot_heading, self.maze_cols)
+                    if s < 0 or s >= self.pi.size:
+                        self.get_logger().error(
+                            f'Computed state index out of bounds: s={s} policy_size={self.pi.size} '
+                            f'state=({self.robot_row},{self.robot_col},{self.robot_heading})'
+                        )
+                        if self.Ab is not None:
+                            self.Ab.stop()
+                        return
                     action = int(self.pi[s])
                     self.execute_action(action)
                     self.steps_taken += 1
@@ -600,10 +701,16 @@ class LineFollowComplexNode(Node):
                         self.Ab.stop()
             else:
                 action_status = f"Spinning {self.spinning_direction}..."
+                self._log_policy_wait_reason(f'spinning_direction={self.spinning_direction}')
         elif self.pi is None:
             action_status = "No policy loaded"
+            self._log_policy_wait_reason('policy is not loaded')
         else:
             action_status = f"State: ({self.robot_row},{self.robot_col},{self.robot_heading})"
+            if not self.at_intersection:
+                self._log_policy_wait_reason('not at intersection yet')
+            elif self.previous_at_intersection:
+                self._log_policy_wait_reason('still in same intersection window; waiting for edge')
         
         self.previous_at_intersection = self.at_intersection
 
@@ -612,7 +719,7 @@ class LineFollowComplexNode(Node):
         edges = cv2.Canny(gray, 100, 200)
 
         processed_msg = self.bridge.cv2_to_imgmsg(edges, encoding='mono8')
-        processed_msg.header = msg.header
+        processed_msg.header = header
         self.publisher.publish(processed_msg)
 
         if ENABLE_VIZ and not HEADLESS:
@@ -632,13 +739,53 @@ class LineFollowComplexNode(Node):
             
             try:
                 viz_msg = self.bridge.cv2_to_imgmsg(viz, encoding='bgr8')
-                viz_msg.header = msg.header
+                viz_msg.header = header
                 self.viz_pub.publish(viz_msg)
             except Exception:
                 pass
 
             cv2.imshow(self.window_name, viz)
             cv2.waitKey(1)
+
+    def image_callback(self, msg: Image):
+        if self._active_image_topic is None:
+            self._active_image_topic = msg.header.frame_id or 'raw'
+            self.get_logger().info(
+                f'Receiving raw camera frames; line follower is active (frame_id={self._active_image_topic})'
+            )
+
+        self.frames_received += 1
+        self.last_frame_time = time.monotonic()
+
+        if not self._should_process_frame():
+            return
+
+        try:
+            frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+        except Exception as e:
+            self.get_logger().error(f'Failed to convert raw image: {e}')
+            return
+
+        self._process_frame(msg.header, frame)
+
+    def compressed_image_callback(self, msg: CompressedImage):
+        if self._active_image_topic is None:
+            self._active_image_topic = 'compressed'
+            self.get_logger().info('Receiving compressed camera frames; line follower is active')
+
+        self.frames_received += 1
+        self.last_frame_time = time.monotonic()
+
+        if not self._should_process_frame():
+            return
+
+        try:
+            frame = self.bridge.compressed_imgmsg_to_cv2(msg, desired_encoding='bgr8')
+        except Exception as e:
+            self.get_logger().error(f'Failed to convert compressed image: {e}')
+            return
+
+        self._process_frame(msg.header, frame)
 
 
 def main(args=None):
