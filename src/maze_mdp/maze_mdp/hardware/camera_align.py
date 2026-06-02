@@ -39,6 +39,7 @@ or, if picamera2/libcamera packages are unavailable on the image::
 
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -230,11 +231,32 @@ class CameraAligner:
 
         if _OPENCV_AVAILABLE:
             try:
-                cam = cv2.VideoCapture(0)
+                # Suppress GStreamer/libv4l2 warnings when opening camera
+                os.environ['OPENCV_VIDEOIO_DEBUG'] = '0'
+                
+                cam = cv2.VideoCapture(0, cv2.CAP_V4L2)
+                # Set resolution before first frame capture
                 cam.set(cv2.CAP_PROP_FRAME_WIDTH, _IMG_W)
                 cam.set(cv2.CAP_PROP_FRAME_HEIGHT, _IMG_H)
+                # Use MJPEG if available (more efficient)
+                try:
+                    cam.set(cv2.CAP_PROP_FOURCC,
+                            cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
+                except Exception:
+                    pass
+                # Set a reasonable frame rate
+                cam.set(cv2.CAP_PROP_FPS, 15)
+                
+                # Verify camera opened successfully
                 if not cam.isOpened():
                     raise RuntimeError('cv2.VideoCapture(0) could not open')
+                
+                # Warm up the camera with a dummy capture
+                for _ in range(2):
+                    ret, _ = cam.read()
+                    if not ret:
+                        raise RuntimeError('cv2 read() returned False')
+                
                 time.sleep(0.2)
                 self._cam = cam
                 self._backend = 'opencv'

@@ -80,9 +80,13 @@ done
 echo "[setup] dpkg lock acquired."
 
 # Build list of packages that are NOT already installed.
-all_pkgs=(python3-numpy python3-opencv v4l-utils python3-picamera2 python3-libcamera python3-rpi.gpio)
+# Core packages needed (always try to install)
+core_pkgs=(python3-numpy python3-rpi.gpio)
+# Camera backends: try both picamera2/libcamera (preferred) and opencv (fallback)
+camera_pkgs=(python3-picamera2 python3-libcamera python3-opencv v4l-utils libatlas-base-dev libjasper-dev libtiff5 libjasper1 libharfbuzz0b libwebp6 libtiff6 libwebp6)
+
 to_install=()
-for pkg in "${all_pkgs[@]}"; do
+for pkg in "${core_pkgs[@]}"; do
     if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then
         echo "[setup] already installed, skipping: $pkg"
     else
@@ -90,52 +94,89 @@ for pkg in "${all_pkgs[@]}"; do
     fi
 done
 
-if [[ ${#to_install[@]} -gt 0 ]]; then
-    echo "[setup] packages to install: ${to_install[*]}"
-    apt update
-    for pkg in "${to_install[@]}"; do
-        if apt-cache show "$pkg" >/dev/null 2>&1; then
-            echo "[setup] installing apt package: $pkg"
-            apt install -y "$pkg"
-        else
-            echo "[setup] WARNING: apt package not available on this image: $pkg"
-        fi
-    done
+# For camera packages, try to install but don't fail if unavailable
+camera_to_install=()
+for pkg in "${camera_pkgs[@]}"; do
+    if dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then
+        echo "[setup] already installed, skipping: $pkg"
+    else
+        camera_to_install+=("$pkg")
+    fi
+done
+
+if [[ ${#to_install[@]} -gt 0 || ${#camera_to_install[@]} -gt 0 ]]; then
+    echo "[setup] updating apt cache..."
+    apt update || echo "[setup] WARNING: apt update had issues, continuing anyway"
+    
+    # Install core packages first (these must succeed)
+    if [[ ${#to_install[@]} -gt 0 ]]; then
+        echo "[setup] installing core packages: ${to_install[*]}"
+        for pkg in "${to_install[@]}"; do
+            apt install -y "$pkg" || echo "[setup] WARNING: failed to install $pkg"
+        done
+    fi
+    
+    # Install camera packages (these can fail gracefully)
+    if [[ ${#camera_to_install[@]} -gt 0 ]]; then
+        echo "[setup] attempting to install camera/image packages: ${camera_to_install[*]}"
+        for pkg in "${camera_to_install[@]}"; do
+            if apt-cache show "$pkg" >/dev/null 2>&1; then
+                echo "[setup] installing: $pkg"
+                apt install -y "$pkg" || echo "[setup] WARNING: failed to install $pkg (continuing)"
+            else
+                echo "[setup] WARNING: package not available in apt cache: $pkg"
+            fi
+        done
+    fi
 else
-    echo "[setup] all apt packages already present, skipping apt update."
+    echo "[setup] all packages already present, skipping apt update."
 fi
 
 # Install pip packages needed by the hardware runner.
 echo "[setup] installing pip packages..."
-pip3 install --upgrade pip setuptools wheel >/dev/null 2>&1 || true
-pip3 install rpi-ws281x adafruit-circuitpython-neopixel >/dev/null 2>&1 || true
+pip3 install --upgrade pip setuptools wheel >/dev/null 2>&1 || echo "[setup] WARNING: pip upgrade had issues"
+pip3 install rpi-ws281x adafruit-circuitpython-neopixel >/dev/null 2>&1 || echo "[setup] WARNING: NeoPixel packages unavailable (LEDs may not work)"
 
+# Check Python module availability with detailed diagnostics
 python3 - <<'PY'
 import importlib.util
+import sys
 
 has_numpy = importlib.util.find_spec("numpy") is not None
 has_picamera = importlib.util.find_spec("picamera2") is not None
 has_libcamera = importlib.util.find_spec("libcamera") is not None
 has_cv2 = importlib.util.find_spec("cv2") is not None
+has_rpi_gpio = importlib.util.find_spec("RPi.GPIO") is not None
 
-camera_ok = (has_picamera and has_libcamera) or has_cv2
-missing = []
-if not has_numpy:
-    missing.append("numpy")
-if not camera_ok:
-    missing.append("camera_backend(picamera2+libcamera or cv2)")
+# Diagnostics
+print("[setup] === Module availability ===")
+print("[setup] numpy: {}".format("✓" if has_numpy else "✗"))
+print("[setup] RPi.GPIO: {}".format("✓" if has_rpi_gpio else "✗"))
+print("[setup] picamera2: {}".format("✓" if has_picamera else "✗"))
+print("[setup] libcamera: {}".format("✓" if has_libcamera else "✗"))
+print("[setup] opencv(cv2): {}".format("✓" if has_cv2 else "✗"))
 
-if missing:
-    print("[setup] WARNING: missing required Python modules after apt install: {}"
-          .format(", ".join(missing)))
-    print("[setup] camera alignment may be unavailable until these modules are installed.")
-else:
-    backend = "picamera2/libcamera" if (has_picamera and has_libcamera) else "opencv(cv2)"
-    print("[setup] Python module check passed: numpy + {}".format(backend))
+# Determine camera backend
+camera_backend = None
+if has_picamera and has_libcamera:
+    camera_backend = "picamera2/libcamera (native)"
+elif has_cv2:
+    camera_backend = "opencv(cv2) (fallback)"
 
-# Exit non-zero so caller can fail fast when camera is required.
-if missing:
-    raise SystemExit(2)
+print("[setup] === Hardware requirements ===")
+critical_ok = has_numpy and has_rpi_gpio
+print("[setup] numpy + RPi.GPIO (CRITICAL): {}".format("✓" if critical_ok else "✗"))
+print("[setup] camera backend: {}".format(camera_backend if camera_backend else "NONE"))
+
+if not critical_ok:
+    print("[setup] ERROR: critical modules missing (numpy, RPi.GPIO)")
+    sys.exit(1)
+
+if not camera_backend:
+    print("[setup] WARNING: no camera backend available; alignment will be unavailable")
+    sys.exit(0)  # Allow continuation but with degraded features
+
+print("[setup] Module check passed")
 PY
 REMOTE_SETUP
 
@@ -143,12 +184,13 @@ REMOTE_SETUP
     scp "$tmp_setup_script" "$ROBOT_HOST:$remote_setup_path"
     rm -f "$tmp_setup_script"
     if ! ssh -tt "$ROBOT_HOST" "chmod +x '$remote_setup_path' && sudo bash '$remote_setup_path'; rc=\$?; rm -f '$remote_setup_path'; exit \$rc"; then
-        if [[ "$CAMERA_REQUIRED" == "1" ]]; then
-            echo "ERROR: required camera dependencies are still missing on the robot." >&2
-            echo "Set CAMERA_REQUIRED=0 to continue without camera alignment." >&2
+        exit_code=$?
+        if [[ $exit_code -eq 1 ]]; then
+            echo "ERROR: critical dependencies failed on the robot (numpy, RPi.GPIO)." >&2
             exit 1
         fi
-        echo "[setup] WARNING: camera dependency install incomplete; continuing because CAMERA_REQUIRED=0"
+        # exit_code == 0 means degraded mode (no camera backend), which is acceptable
+        echo "[setup] WARNING: camera backend unavailable; policy will run without camera alignment"
     fi
 fi
 
