@@ -18,6 +18,7 @@ MAZE_NAME="${MAZE_NAME:-fixture_7x7_rooms}"
 ALGO="${ALGO:-qlearning}"
 POLICY_PATH="${POLICY_PATH:-}"
 INSTALL_DEPS="${INSTALL_DEPS:-1}"
+CAMERA_REQUIRED="${CAMERA_REQUIRED:-1}"
 
 if [[ -z "$POLICY_PATH" ]]; then
     latest_run="$(ls -td "data/training/${ALGO}/${MAZE_NAME}/"* 2>/dev/null | head -1 || true)"
@@ -58,7 +59,7 @@ set -euo pipefail
 
 apt update
 
-for pkg in python3-numpy python3-picamera2 python3-libcamera; do
+for pkg in python3-numpy; do
     if apt-cache show "$pkg" >/dev/null 2>&1; then
         echo "[setup] installing apt package: $pkg"
         apt install -y "$pkg"
@@ -66,6 +67,40 @@ for pkg in python3-numpy python3-picamera2 python3-libcamera; do
         echo "[setup] WARNING: apt package not available on this image: $pkg"
     fi
 done
+
+# Try distro packages first for camera stack.
+for pkg in python3-picamera2 python3-libcamera; do
+    if apt-cache show "$pkg" >/dev/null 2>&1; then
+        echo "[setup] installing apt package: $pkg"
+        apt install -y "$pkg"
+    else
+        echo "[setup] WARNING: apt package not available on this image: $pkg"
+    fi
+done
+
+# Ubuntu images often miss picamera2/libcamera python bindings in apt.
+# Fallback to pip for picamera2 and libcamera if still absent.
+if ! python3 - <<'PY'
+import importlib.util
+import sys
+sys.exit(0 if importlib.util.find_spec("picamera2") is not None else 1)
+PY
+then
+    echo "[setup] attempting pip fallback for picamera2..."
+    apt install -y python3-pip python3-wheel || true
+    python3 -m pip install --break-system-packages --upgrade pip setuptools wheel || true
+    python3 -m pip install --break-system-packages picamera2 || true
+fi
+
+if ! python3 - <<'PY'
+import importlib.util
+import sys
+sys.exit(0 if importlib.util.find_spec("libcamera") is not None else 1)
+PY
+then
+    echo "[setup] attempting pip fallback for libcamera..."
+    python3 -m pip install --break-system-packages libcamera || true
+fi
 
 python3 - <<'PY'
 import importlib.util
@@ -81,13 +116,24 @@ if missing:
     print("[setup] camera alignment may be unavailable until these modules are installed.")
 else:
     print("[setup] Python module check passed: picamera2, libcamera, numpy")
+
+# Exit non-zero so caller can fail fast when camera is required.
+if missing:
+    raise SystemExit(2)
 PY
 REMOTE_SETUP
 
     remote_setup_path="/tmp/hardware_setup_deps_$$.sh"
     scp "$tmp_setup_script" "$ROBOT_HOST:$remote_setup_path"
     rm -f "$tmp_setup_script"
-    ssh -tt "$ROBOT_HOST" "chmod +x '$remote_setup_path' && sudo bash '$remote_setup_path'; rc=\$?; rm -f '$remote_setup_path'; exit \$rc"
+    if ! ssh -tt "$ROBOT_HOST" "chmod +x '$remote_setup_path' && sudo bash '$remote_setup_path'; rc=\$?; rm -f '$remote_setup_path'; exit \$rc"; then
+        if [[ "$CAMERA_REQUIRED" == "1" ]]; then
+            echo "ERROR: required camera dependencies are still missing on the robot." >&2
+            echo "Set CAMERA_REQUIRED=0 to continue without camera alignment." >&2
+            exit 1
+        fi
+        echo "[setup] WARNING: camera dependency install incomplete; continuing because CAMERA_REQUIRED=0"
+    fi
 fi
 
 echo "[setup] copying runner + policy to robot..."
