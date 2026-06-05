@@ -95,6 +95,11 @@ def parse_args():
     p.add_argument('--turn-pwm', type=int, default=12,
                    help='Motor PWM level (0-100) used during the in-place '
                         'rotation.  Lower values give more control.')
+    p.add_argument('--rotate-pulse-s', type=float, default=None,
+                   help='Duration (seconds) of each camera-alignment '
+                        'correction pulse (Phase A).  Defaults to '
+                        '5 * turn_time / 90 so that one pulse is ~5 deg.  '
+                        'Reduce if the robot oscillates during alignment.')
     return p.parse_args()
 
 
@@ -244,11 +249,20 @@ if args.no_camera_align:
     aligner = None
     print('[main] camera alignment disabled by CLI flag.')
 else:
+    # Derive rotate_pulse_s from turn_time when not explicitly given.
+    # Target: ~5 degrees per pulse.  At PWM=12 the robot covers 90 deg
+    # in turn_time seconds, so 5 deg takes 5*turn_time/90 seconds.
+    if args.rotate_pulse_s is not None:
+        _rotate_pulse_s = args.rotate_pulse_s
+    else:
+        _rotate_pulse_s = 5.0 * args.turn_time / 90.0
+    print('[main] camera align rotate_pulse_s={:.4f}s'.format(_rotate_pulse_s))
     aligner = CameraAligner(
         Ab, TR,
         image_center_col=args.image_center_col,
         theta_offset=args.theta_offset,
         debug_dir=args.camera_align_debug,
+        rotate_pulse_s=_rotate_pulse_s,
     )
     if not aligner.start():
         print('[main] camera unavailable; falling back to open-loop turns.')
@@ -272,6 +286,7 @@ def post_turn_motion():
     outcome = aligner.align_and_creep()
     print('[main] post-turn align outcome: {}'.format(outcome.value))
     return outcome == AlignOutcome.OK
+
 
 # Calibration sweep, verbatim from the reference.
 for i in range(0, 100):

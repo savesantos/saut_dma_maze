@@ -80,7 +80,12 @@ _ROI_RIGHT = 0.80
 _THETA_TOL_RAD = np.deg2rad(4.0)
 _THETA_STABLE_FRAMES = 3
 _ROTATE_PWM = 12
-_ROTATE_PULSE_S = 0.06
+# Default pulse duration for in-place correction rotations.
+# Must be short enough that one pulse moves the robot only ~5-10 degrees.
+# Formula: target_deg * turn_time_s / 90.  E.g. for TURN_TIME=0.15 s
+# (600 deg/s) a 0.015 s pulse is ~9 deg; for TURN_TIME=0.3 s it is ~4.5 deg.
+# The old value of 0.06 s was 36 deg at 600 deg/s, which caused oscillation.
+_ROTATE_PULSE_S = 0.015
 _ROTATE_GAP_S = 0.04
 _ALIGN_TIMEOUT_S = 1.5
 
@@ -198,12 +203,14 @@ class CameraAligner:
         image_center_col: float | None = None,
         theta_offset: float = 0.0,
         debug_dir: str | None = None,
+        rotate_pulse_s: float = _ROTATE_PULSE_S,
     ) -> None:
         self._motors = motors
         self._tr = line_sensor
         self._image_center_col = image_center_col
         self._theta_offset = float(theta_offset)
         self._debug_dir = debug_dir
+        self._rotate_pulse_s = float(rotate_pulse_s)
         self._cam = None
         self._backend = None
         self._frame_idx = 0
@@ -333,13 +340,17 @@ class CameraAligner:
             return AlignOutcome.NO_CAMERA
 
         align_ok = self._phase_rotate()
-        creep_ok = self._phase_creep()
-
-        if align_ok and creep_ok:
-            return AlignOutcome.OK
-        if not align_ok and creep_ok:
+        if not align_ok:
+            # Phase A timed out: the robot heading is uncertain after
+            # repeated correction pulses.  Do NOT creep forward (that
+            # would move the robot in an unknown direction and desync
+            # the pose estimate).  Fall back to the fixed-time burst so
+            # the robot at least clears the intersection center.
+            self._open_loop_forward()
             return AlignOutcome.ALIGN_TIMEOUT
-        return AlignOutcome.CREEP_TIMEOUT
+
+        creep_ok = self._phase_creep()
+        return AlignOutcome.OK if creep_ok else AlignOutcome.CREEP_TIMEOUT
 
     def _phase_rotate(self) -> bool:
         deadline = time.monotonic() + _ALIGN_TIMEOUT_S
@@ -370,7 +381,7 @@ class CameraAligner:
             self._motors.right()
         else:
             self._motors.left()
-        time.sleep(_ROTATE_PULSE_S)
+        time.sleep(self._rotate_pulse_s)
         self._motors.stop()
         time.sleep(_ROTATE_GAP_S)
 

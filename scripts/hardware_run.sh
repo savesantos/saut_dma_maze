@@ -41,6 +41,9 @@ INTERSECTION_BRAKE_S="${INTERSECTION_BRAKE_S:-0.15}"
 PID_LOG_EVERY="${PID_LOG_EVERY:-25}"
 TURN_TIME="${TURN_TIME:-0.3}"
 TURN_PWM="${TURN_PWM:-12}"
+# rotate_pulse_s: duration of each camera-align correction pulse.
+# Defaults to 5 * TURN_TIME / 90 (≈5 deg per pulse) if left empty.
+ROTATE_PULSE_S="${ROTATE_PULSE_S:-}"
 
 EXTRA_ARGS="${EXTRA_ARGS:-}"
 
@@ -50,6 +53,13 @@ echo "[run] camera backend preference: $CAMERA_BACKEND"
 echo "[run] intersection stop: threshold=$LINE_THRESHOLD active_count=$INTERSECTION_ACTIVE_COUNT brake_s=$INTERSECTION_BRAKE_S"
 echo "[run] PID telemetry log every: $PID_LOG_EVERY cycles"
 echo "[run] turn: pwm=$TURN_PWM time=${TURN_TIME}s"
+
+# Build optional --rotate-pulse-s flag.
+_ROTATE_PULSE_ARG=""
+if [[ -n "${ROTATE_PULSE_S}" ]]; then
+  _ROTATE_PULSE_ARG="--rotate-pulse-s ${ROTATE_PULSE_S}"
+  echo "[run] camera align rotate_pulse_s=${ROTATE_PULSE_S}s (override)"
+fi
 
 echo "[run] command will execute on the robot in $REMOTE_DIR"
 # rpi_ws281x needs /dev/mem access (root) for the NeoPixel ring.
@@ -68,4 +78,5 @@ ssh -t "$ROBOT_HOST" "cd $REMOTE_DIR && sudo env PATH=\$PATH CAMERA_BACKEND=$CAM
   --pid-log-every $PID_LOG_EVERY \
   --turn-time $TURN_TIME \
   --turn-pwm $TURN_PWM \
+  $_ROTATE_PULSE_ARG \
   $EXTRA_ARGS"
