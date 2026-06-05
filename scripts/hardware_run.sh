@@ -17,6 +17,8 @@
 #   MAX_STEPS=200
 #   LINE_THRESHOLD=850 INTERSECTION_ACTIVE_COUNT=4 INTERSECTION_BRAKE_S=0.15
 #   PID_LOG_EVERY=25   # 0 disables PID telemetry logs
+#   TURN_TIME=0.3      # seconds for in-place rotation; reduce if >90° overshoot (e.g. 0.15)
+#   TURN_PWM=12        # motor PWM during turn; lower = slower, more control
 #   EXTRA_ARGS='--camera-align-debug /tmp/align_frames'
 set -euo pipefail
 
@@ -37,6 +39,8 @@ LINE_THRESHOLD="${LINE_THRESHOLD:-850}"
 INTERSECTION_ACTIVE_COUNT="${INTERSECTION_ACTIVE_COUNT:-4}"
 INTERSECTION_BRAKE_S="${INTERSECTION_BRAKE_S:-0.15}"
 PID_LOG_EVERY="${PID_LOG_EVERY:-25}"
+TURN_TIME="${TURN_TIME:-0.3}"
+TURN_PWM="${TURN_PWM:-12}"
 
 EXTRA_ARGS="${EXTRA_ARGS:-}"
 
@@ -45,6 +49,7 @@ echo "[run] defaults: rows=$ROWS cols=$COLS row=$START_ROW col=$START_COL headin
 echo "[run] camera backend preference: $CAMERA_BACKEND"
 echo "[run] intersection stop: threshold=$LINE_THRESHOLD active_count=$INTERSECTION_ACTIVE_COUNT brake_s=$INTERSECTION_BRAKE_S"
 echo "[run] PID telemetry log every: $PID_LOG_EVERY cycles"
+echo "[run] turn: pwm=$TURN_PWM time=${TURN_TIME}s"
 
 echo "[run] command will execute on the robot in $REMOTE_DIR"
 # rpi_ws281x needs /dev/mem access (root) for the NeoPixel ring.
@@ -61,4 +66,6 @@ ssh -t "$ROBOT_HOST" "cd $REMOTE_DIR && sudo env PATH=\$PATH CAMERA_BACKEND=$CAM
   --intersection-active-count $INTERSECTION_ACTIVE_COUNT \
   --intersection-brake-s $INTERSECTION_BRAKE_S \
   --pid-log-every $PID_LOG_EVERY \
+  --turn-time $TURN_TIME \
+  --turn-pwm $TURN_PWM \
   $EXTRA_ARGS"

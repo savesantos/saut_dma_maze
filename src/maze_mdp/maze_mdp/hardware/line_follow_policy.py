@@ -88,6 +88,13 @@ def parse_args():
     p.add_argument('--pid-log-every', type=int, default=25,
                    help='Print PID telemetry every N control cycles. '
                         'Set 0 to disable PID telemetry logs.')
+    p.add_argument('--turn-time', type=float, default=0.3,
+                   help='Duration (seconds) of the in-place rotation for '
+                        'turn_left / turn_right.  Reduce if the robot '
+                        'overshoots 90 degrees (e.g. 0.15).')
+    p.add_argument('--turn-pwm', type=int, default=12,
+                   help='Motor PWM level (0-100) used during the in-place '
+                        'rotation.  Lower values give more control.')
     return p.parse_args()
 
 
@@ -150,10 +157,10 @@ def turn_right():
 
     time.sleep(0.05)
 
-    Ab.setPWMA(12)
-    Ab.setPWMB(12)
+    Ab.setPWMA(args.turn_pwm)
+    Ab.setPWMB(args.turn_pwm)
     Ab.right()
-    time.sleep(0.3)
+    time.sleep(args.turn_time)
 
     Ab.stop()
 
@@ -172,10 +179,10 @@ def turn_left():
 
     time.sleep(0.05)
 
-    Ab.setPWMA(12)
-    Ab.setPWMB(12)
+    Ab.setPWMA(args.turn_pwm)
+    Ab.setPWMB(args.turn_pwm)
     Ab.left()
-    time.sleep(0.3)
+    time.sleep(args.turn_time)
 
     Ab.stop()
 
@@ -229,6 +236,7 @@ Ab.stop()
 print("Line follow + policy execution")
 print("start cell=({},{},{}) goal=({},{})".format(
     robot_row, robot_col, robot_heading, goal_cell[0], goal_cell[1]))
+print("[turn] pwm={} time={:.3f}s".format(args.turn_pwm, args.turn_time))
 time.sleep(0.5)
 
 # Camera aligner (default on; disable with --no-camera-align).
