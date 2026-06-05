@@ -118,8 +118,11 @@ LED_INVERT = False
 
 # ---------------------------------------------------------------- PID state
 maximum = 26
+INTEGRAL_MAX = 3000          # anti-windup clamp: caps the integral term
 integral = 0
 last_proportional = 0
+correction_cycles = 0        # consecutive cycles at maximum correction
+MAX_CORRECTION_CYCLES = 150  # stop if stuck here (line lost / wedged)
 
 
 # ---------------------------------------------------------------- motion primitives
@@ -353,6 +356,13 @@ while True:
                 Ab.stop()
                 break
 
+            # Reset PID state so integral windup from the previous
+            # segment does not carry over into the next.
+            integral = 0
+            last_proportional = 0
+            correction_cycles = 0
+            pid_log_counter = 0
+
             if strip is not None:
                 for i in range(4):
                     strip.setPixelColor(i, Color(100, 0, 0))
@@ -361,7 +371,8 @@ while True:
             # PID line-following, verbatim from the reference.
             proportional = position - 2000
             derivative = proportional - last_proportional
-            integral += proportional
+            integral = max(-INTEGRAL_MAX,
+                           min(INTEGRAL_MAX, integral + proportional))
             last_proportional = proportional
 
             power_difference = (proportional / 30
@@ -372,6 +383,21 @@ while True:
                 power_difference = maximum
             if power_difference < -maximum:
                 power_difference = -maximum
+
+            # Stuck / line-lost detection: if the correction is pegged at
+            # the maximum for too many consecutive cycles the robot has
+            # probably lost the line or wedged against a wall.  Stop safely
+            # rather than spinning forever.
+            if abs(power_difference) >= maximum:
+                correction_cycles += 1
+                if correction_cycles >= MAX_CORRECTION_CYCLES:
+                    print('[pid] line lost or wedged ({} max-correction '
+                          'cycles); stopping.'.format(correction_cycles))
+                    Ab.stop()
+                    break
+            else:
+                correction_cycles = 0
+
             if args.pid_log_every > 0:
                 pid_log_counter += 1
                 if pid_log_counter >= args.pid_log_every:
