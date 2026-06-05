@@ -76,6 +76,18 @@ def parse_args():
     p.add_argument('--theta-offset', type=float, default=0.0,
                    help='Camera tilt offset (rad) subtracted from the '
                         'measured line angle. Calibrate once on the bot.')
+    p.add_argument('--line-threshold', type=int, default=850,
+                   help='IR threshold above which a sensor is treated as '
+                        'on the black line.')
+    p.add_argument('--intersection-active-count', type=int, default=4,
+                   help='Number of active IR sensors required to classify '
+                        'an intersection (lower means earlier stopping).')
+    p.add_argument('--intersection-brake-s', type=float, default=0.15,
+                   help='Settle time after cross detection to avoid rolling '
+                        'past the intersection center.')
+    p.add_argument('--pid-log-every', type=int, default=25,
+                   help='Print PID telemetry every N control cycles. '
+                        'Set 0 to disable PID telemetry logs.')
     return p.parse_args()
 
 
@@ -105,7 +117,7 @@ LED_INVERT = False
 
 
 # ---------------------------------------------------------------- PID state
-maximum = 35
+maximum = 26
 integral = 0
 last_proportional = 0
 
@@ -113,8 +125,8 @@ last_proportional = 0
 # ---------------------------------------------------------------- motion primitives
 # Verbatim from the working Line_Follow2 reference.
 def go_forward():
-    Ab.setPWMA(15)
-    Ab.setPWMB(15)
+    Ab.setPWMA(12)
+    Ab.setPWMB(12)
     Ab.forward()
     time.sleep(0.5)
 
@@ -126,8 +138,8 @@ def go_forward():
 
 
 def turn_right():
-    Ab.setPWMA(15)
-    Ab.setPWMB(15)
+    Ab.setPWMA(12)
+    Ab.setPWMB(12)
     Ab.forward()
     time.sleep(0.3)
 
@@ -135,8 +147,8 @@ def turn_right():
 
     time.sleep(0.05)
 
-    Ab.setPWMA(15)
-    Ab.setPWMB(15)
+    Ab.setPWMA(12)
+    Ab.setPWMB(12)
     Ab.right()
     time.sleep(0.3)
 
@@ -148,8 +160,8 @@ def turn_right():
 
 
 def turn_left():
-    Ab.setPWMA(15)
-    Ab.setPWMB(15)
+    Ab.setPWMA(12)
+    Ab.setPWMB(12)
     Ab.forward()
     time.sleep(0.3)
 
@@ -157,8 +169,8 @@ def turn_left():
 
     time.sleep(0.05)
 
-    Ab.setPWMA(15)
-    Ab.setPWMB(15)
+    Ab.setPWMA(12)
+    Ab.setPWMB(12)
     Ab.left()
     time.sleep(0.3)
 
@@ -185,6 +197,7 @@ robot_heading = args.heading
 goal_cell = (args.goal_row, args.goal_col)
 steps_taken = 0
 done = False
+pid_log_counter = 0
 
 
 def state_index(r, c, h):
@@ -239,8 +252,8 @@ def post_turn_motion():
     pose estimate; returns False if we fell back to open-loop.
     """
     if aligner is None:
-        Ab.setPWMA(15)
-        Ab.setPWMB(15)
+        Ab.setPWMA(12)
+        Ab.setPWMB(12)
         Ab.forward()
         time.sleep(0.5)
         Ab.stop()
@@ -271,13 +284,14 @@ while True:
     try:
         position, Sensors = TR.readLine()
 
-        intersection = (Sensors[0] > 900 and Sensors[1] > 900
-                        and Sensors[2] > 900 and Sensors[3] > 900
-                        and Sensors[4] > 900)
+        active_count = sum(s > args.line_threshold for s in Sensors)
+        intersection = active_count >= args.intersection_active_count
 
         if intersection:
             Ab.setPWMA(0)
             Ab.setPWMB(0)
+            Ab.stop()
+            time.sleep(args.intersection_brake_s)
 
             if done or steps_taken >= args.max_steps:
                 Ab.stop()
@@ -358,7 +372,12 @@ while True:
                 power_difference = maximum
             if power_difference < -maximum:
                 power_difference = -maximum
-            print(position, power_difference)
+            if args.pid_log_every > 0:
+                pid_log_counter += 1
+                if pid_log_counter >= args.pid_log_every:
+                    print('[pid] pos={} diff={:.2f}'.format(
+                        position, power_difference))
+                    pid_log_counter = 0
             if power_difference < 0:
                 Ab.setPWMA(0.5 * (maximum + power_difference))
                 Ab.setPWMB(0.5 * maximum)
