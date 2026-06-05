@@ -370,6 +370,11 @@ while True:
             last_proportional = 0
             correction_cycles = 0
             pid_log_counter = 0
+            # Ensure forward direction is set for the PID loop.
+            # turn_right/turn_left end with Ab.stop() which clears the
+            # direction register; without this the setPWMA/setPWMB calls
+            # in the PID branch have no effect and the robot stalls.
+            Ab.forward()
 
             if strip is not None:
                 for i in range(4):
